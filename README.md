@@ -41,3 +41,31 @@ After pulling from git, ensure that your env is up to date:
 ```bash
 conda env update -n bullet39 --file environment.yml --prune
 ```
+
+
+
+# Git Commands
+
+In order to push to git
+
+1. Add all the changes to the commit
+```bash
+git add .
+```
+
+2. 3. Commit and add comment
+```bash
+git commit -m"COMMENT HERE"
+```
+
+Push to github
+```bash
+git push origin main
+```
+
+
+
+PULL FROM GIT
+```bash
+git pull
+```
