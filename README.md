@@ -9,6 +9,12 @@ conda install -c conda-forge <package-name> -y
 
 # Export the environment
 When something changes in the environment (like you add a new dependency) you need to update the environment file by pasting the following
+Windows
+```bash
+conda env export --from-history | findstr /V "^prefix:" > environment.yml
+```
+
+Mac
 ```bash
 conda env export --from-history | grep -v "^prefix:" > environment.yml
 ```
