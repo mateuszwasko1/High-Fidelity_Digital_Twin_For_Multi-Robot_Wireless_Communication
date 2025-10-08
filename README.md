@@ -64,8 +64,18 @@ git push origin main
 ```
 
 
-
 PULL FROM GIT
+1. pull from github
 ```bash
 git pull
+```
+2. update the environment
+```bash
+conda env update -n bullet39 --file environment.yml --prune
+```
+
+reset to last commit
+1. reset to last commit
+```bash
+git reset --hard origin/main
 ```
