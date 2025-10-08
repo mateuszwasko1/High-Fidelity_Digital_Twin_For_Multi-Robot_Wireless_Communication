@@ -53,12 +53,12 @@ In order to push to git
 git add .
 ```
 
-2. 3. Commit and add comment
+2. Commit and add comment
 ```bash
 git commit -m"COMMENT HERE"
 ```
 
-Push to github
+3. Push to github
 ```bash
 git push origin main
 ```
