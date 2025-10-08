@@ -79,3 +79,8 @@ reset to last commit
 ```bash
 git reset --hard origin/main
 ```
+
+# Running Scene
+```bash
+python "name of file or just drag it to terminal"
+```
