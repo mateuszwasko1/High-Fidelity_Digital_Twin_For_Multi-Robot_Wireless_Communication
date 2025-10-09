@@ -1,25 +1,575 @@
 """
-Basic PyBullet simulation setup for a robot arm.
-This script loads a simple robot arm URDF and starts a simulation.
+Object-Oriented PyBullet Robot Arm Simulation with VLM Integration
+This module provides a clean, modular robot simulation with vision language model analysis.
 """
+
 import pybullet as p
 import pybullet_data
 import time
+import numpy as np
+import os
+import random
+from typing import List, Dict, Tuple, Optional
 
-# Connect to PyBullet GUI
-physicsClient = p.connect(p.GUI)
-p.setAdditionalSearchPath(pybullet_data.getDataPath())
-p.setGravity(0, 0, -9.81)
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed, use regular os.getenv()
 
-# Load plane and robot arm (replace with your URDF as needed)
-planeId = p.loadURDF("plane.urdf")
-robotId = p.loadURDF("kuka_iiwa/model.urdf", useFixedBase=True)
+# Try to import VLM analyzer (optional)
+try:
+    # Try relative import first
+    from .vlm_analysis import VLMAnalyzer
+    VLM_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    try:
+        # Try absolute import from simulations folder
+        import sys
+        import os
+        sys.path.append(os.path.join(os.path.dirname(__file__)))
+        from vlm_analysis import VLMAnalyzer
+        VLM_AVAILABLE = True
+    except ImportError:
+        print("⚠️ VLM analysis not available - missing dependencies")
+        VLMAnalyzer = None
+        VLM_AVAILABLE = False
 
-# Run simulation for a few seconds
-for i in range(1000):
-    p.stepSimulation()
-    time.sleep(1./240.)
 
-# Disconnect
-#Test
-p.disconnect()
+class RobotArmSimulation:
+    """
+    Main simulation class for robot arm with VLM-based object detection
+    """
+    
+    def __init__(self, gui_mode: bool = True, api_key: Optional[str] = None):
+        """
+        Initialize the robot arm simulation
+        
+        Args:
+            gui_mode: Whether to run with GUI or headless
+            api_key: Google AI Studio API key for VLM analysis
+        """
+        self.gui_mode = gui_mode
+        self.physics_client = None
+        self.robot_id = None
+        self.plane_id = None
+        self.objects = {}
+        self.camera = None
+        self.vlm_analyzer = None
+        
+        # Initialize VLM if API key provided and VLM is available
+        if api_key and VLM_AVAILABLE and VLMAnalyzer:
+            try:
+                self.vlm_analyzer = VLMAnalyzer(api_key)
+                print("✅ VLM Analyzer initialized successfully")
+                
+                # Warm up the VLM with a dummy prediction to speed up future ones
+                print("🔥 Warming up VLM (first prediction is always slower)...")
+                self._warmup_vlm()
+                print("✅ VLM warm-up completed - future predictions will be faster")
+                
+            except Exception as e:
+                print(f"⚠️ VLM initialization failed: {e}")
+        elif not VLM_AVAILABLE:
+            print("⚠️ VLM not available - install dependencies with:")
+            print("   conda env update -n bullet39 --file environment.yml --prune")
+        
+        self._setup_simulation()
+    
+    def _warmup_vlm(self):
+        """Warm up VLM with a simple dummy prediction to speed up future ones"""
+        if not self.vlm_analyzer:
+            return
+            
+        try:
+            # Create a simple 1x1 white image
+            dummy_image = np.ones((1, 1, 3), dtype=np.uint8) * 255  # White pixel
+            
+            # Create a simple warm-up prompt
+            warmup_prompt = """
+            This is a warm-up test. Please respond with a simple JSON:
+            {
+                "objects": [
+                    {
+                        "name": "test",
+                        "color": "white",
+                        "shape": "pixel",
+                        "center_x": 0,
+                        "center_y": 0,
+                        "confidence": "high"
+                    }
+                ]
+            }
+            """
+            
+            # Send warm-up request (this will be slow but subsequent ones will be fast)
+            import time
+            start_time = time.time()
+            
+            # Use a simpler method for warm-up to avoid complex processing
+            try:
+                from PIL import Image
+                pil_image = Image.fromarray(dummy_image.astype('uint8'))
+                response = self.vlm_analyzer.model.generate_content([warmup_prompt, pil_image])
+                
+                warmup_time = time.time() - start_time
+                print(f"   ⏱️ Warm-up took {warmup_time:.1f} seconds")
+                
+            except Exception as e:
+                print(f"   ⚠️ Warm-up had issues but VLM should still work: {e}")
+                
+        except Exception as e:
+            print(f"   ⚠️ Could not warm up VLM: {e}")
+    
+    def _setup_simulation(self):
+        """Initialize PyBullet simulation environment"""
+        # Connect to physics server
+        connection_mode = p.GUI if self.gui_mode else p.DIRECT
+        self.physics_client = p.connect(connection_mode)
+        
+        # Set up physics environment
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())
+        p.setGravity(0, 0, -9.81)
+        p.setRealTimeSimulation(0)
+        
+        # Load environment
+        self._load_environment()
+        self._setup_camera()
+    
+    def _load_environment(self):
+        """Load the robot, plane, and objects"""
+        # Load plane
+        self.plane_id = p.loadURDF("plane.urdf")
+        
+        # Load robot arm
+        self.robot_id = p.loadURDF("franka_panda/panda.urdf", useFixedBase=True)
+        
+        print(f"✅ Environment loaded - Robot ID: {self.robot_id}")
+    
+    def _setup_camera(self):
+        """Initialize overhead camera system"""
+        self.camera = OverheadCamera()
+        print("✅ Camera system initialized")
+    
+    def generate_random_position(self, min_radius: float = 0.2, max_radius: float = 0.5, 
+                               height_range: Tuple[float, float] = (0.05, 0.15)) -> List[float]:
+        """
+        Generate a random position within robot arm reach AND camera field of view
+        
+        Args:
+            min_radius: Minimum distance from robot base (meters)
+            max_radius: Maximum distance from robot base (meters)  
+            height_range: (min_height, max_height) above table (meters)
+            
+        Returns:
+            [x, y, z] position coordinates
+        """
+        # Camera is positioned at [0.5, 0.0, 1.5] looking down at [0.5, 0.0, 0]
+        # With 60° FOV, the viewing area is roughly a rectangle around the target
+        
+        # Define camera viewing area (approximate bounds for 60° FOV at 1.5m height)
+        camera_fov_bounds = {
+            'x_min': 0.0,   # Left edge of camera view
+            'x_max': 1.0,   # Right edge of camera view  
+            'y_min': -0.5,  # Bottom edge of camera view
+            'y_max': 0.5    # Top edge of camera view
+        }
+        
+        # Generate position within camera bounds AND robot reach
+        attempts = 0
+        max_attempts = 50
+        
+        while attempts < max_attempts:
+            # Generate random position within camera bounds
+            x = random.uniform(camera_fov_bounds['x_min'], camera_fov_bounds['x_max'])
+            y = random.uniform(camera_fov_bounds['y_min'], camera_fov_bounds['y_max'])
+            z = random.uniform(height_range[0], height_range[1])
+            
+            # Check if position is within robot reach
+            distance_from_robot = (x**2 + y**2)**0.5
+            
+            if min_radius <= distance_from_robot <= max_radius:
+                return [x, y, z]
+            
+            attempts += 1
+        
+        # Fallback: generate a safe position if we can't find one in bounds
+        print(f"⚠️ Could not find position in camera view after {max_attempts} attempts, using fallback")
+        angle = random.uniform(0, 2 * np.pi)
+        radius = random.uniform(min_radius, max_radius)
+        x = radius * np.cos(angle) + 0.5  # Offset to center of camera view
+        y = radius * np.sin(angle)
+        z = random.uniform(height_range[0], height_range[1])
+        
+        # Clamp to camera bounds
+        x = max(camera_fov_bounds['x_min'], min(camera_fov_bounds['x_max'], x))
+        y = max(camera_fov_bounds['y_min'], min(camera_fov_bounds['y_max'], y))
+        
+        return [x, y, z]
+    
+    def add_random_objects(self, num_objects: int = 3) -> List[str]:
+        """
+        Add multiple objects at random positions within camera view
+        
+        Args:
+            num_objects: Number of objects to create
+            
+        Returns:
+            List of object names created
+        """
+        object_types = ['cube', 'sphere', 'cylinder']
+        colors = [
+            [1, 0, 0, 1],    # Red
+            [0, 1, 0, 1],    # Green  
+            [0, 0, 1, 1],    # Blue
+            [1, 1, 0, 1],    # Yellow
+            [1, 0, 1, 1],    # Magenta
+            [0, 1, 1, 1],    # Cyan
+            [1, 0.5, 0, 1],  # Orange
+            [0.5, 0, 1, 1],  # Purple
+        ]
+        color_names = ['red', 'green', 'blue', 'yellow', 'magenta', 'cyan', 'orange', 'purple']
+        
+        created_objects = []
+        
+        print(f"📷 Generating {num_objects} objects within camera field of view...")
+        print(f"   Camera viewing area: X(0.0-1.0), Y(-0.5-0.5), Z(0.05-0.15)")
+        
+        for i in range(num_objects):
+            # Random object type and color
+            obj_type = random.choice(object_types)
+            color_idx = random.randint(0, len(colors) - 1)
+            color = colors[color_idx]
+            color_name = color_names[color_idx]
+            
+            # Generate random position within camera view
+            position = self.generate_random_position()
+            
+            # Create unique name
+            obj_name = f"{color_name}_{obj_type}_{i+1}"
+            
+            # Add object
+            try:
+                self.add_object(obj_name, obj_type, position, color)
+                created_objects.append(obj_name)
+                print(f"   ✅ {obj_name} at ({position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f})")
+            except Exception as e:
+                print(f"   ⚠️ Failed to create {obj_name}: {e}")
+        
+        return created_objects
+    
+    def add_object(self, name: str, obj_type: str, position: List[float], 
+                   color: List[float], size: float = 0.05) -> int:
+        """
+        Add an object to the simulation
+        
+        Args:
+            name: Object identifier
+            obj_type: 'cube', 'sphere', or 'cylinder'
+            position: [x, y, z] position
+            color: [r, g, b, a] color values (0-1)
+            size: Object size/radius
+            
+        Returns:
+            PyBullet object ID
+        """
+        if obj_type == 'cube':
+            visual_shape = p.createVisualShape(
+                p.GEOM_BOX, halfExtents=[size, size, size], rgbaColor=color)
+            collision_shape = p.createCollisionShape(
+                p.GEOM_BOX, halfExtents=[size, size, size])
+        elif obj_type == 'sphere':
+            visual_shape = p.createVisualShape(
+                p.GEOM_SPHERE, radius=size, rgbaColor=color)
+            collision_shape = p.createCollisionShape(
+                p.GEOM_SPHERE, radius=size)
+        elif obj_type == 'cylinder':
+            visual_shape = p.createVisualShape(
+                p.GEOM_CYLINDER, radius=size, length=size*2, rgbaColor=color)
+            collision_shape = p.createCollisionShape(
+                p.GEOM_CYLINDER, radius=size, height=size*2)
+        else:
+            raise ValueError(f"Unsupported object type: {obj_type}")
+        
+        object_id = p.createMultiBody(
+            baseMass=0.1,
+            baseCollisionShapeIndex=collision_shape,
+            baseVisualShapeIndex=visual_shape,
+            basePosition=position
+        )
+        
+        self.objects[name] = {
+            'id': object_id,
+            'type': obj_type,
+            'position': position,
+            'color': color
+        }
+        
+        print(f"✅ Added {obj_type} '{name}' at {position}")
+        return object_id
+    
+    def capture_scene(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Capture current scene from overhead camera
+        
+        Returns:
+            Tuple of (rgb_image, depth_image, segmentation_image)
+        """
+        return self.camera.capture_image()
+    
+    def analyze_scene_with_vlm(self) -> List[Dict]:
+        """
+        Analyze current scene using VLM and get world coordinates
+        
+        Returns:
+            List of detected objects with world coordinates
+        """
+        if not self.vlm_analyzer:
+            print("⚠️ VLM not initialized. Skipping analysis.")
+            return []
+
+        try:
+            import time
+            
+            # Time the image capture
+            start_time = time.time()
+            rgb_img, depth_img, seg_img = self.capture_scene()
+            capture_time = time.time() - start_time
+            
+            # Time the VLM analysis
+            vlm_start = time.time()
+            detected_objects = self.vlm_analyzer.get_object_world_coordinates(rgb_img, depth_img)
+            vlm_time = time.time() - vlm_start
+            
+            print(f"⏱️ Timing: Capture={capture_time:.2f}s, VLM={vlm_time:.2f}s, Total={capture_time+vlm_time:.2f}s")
+            
+            if detected_objects:
+                print(f"🔍 VLM detected {len(detected_objects)} objects with coordinates:")
+                for i, obj in enumerate(detected_objects):
+                    name = obj.get('name', 'Unknown')
+                    color = obj.get('color', 'Unknown')
+                    coords = obj.get('world_coordinates')
+                    reachable = obj.get('reachable', False)
+                    
+                    if coords:
+                        print(f"  {i+1}. {name} ({color}) - Position: ({coords['x']:.3f}, {coords['y']:.3f}, {coords['z']:.3f}) - {'✅ Reachable' if reachable else '❌ Out of reach'}")
+                    else:
+                        print(f"  {i+1}. {name} ({color}) - Position: Unknown")
+            else:
+                print("🔍 No objects detected")
+            
+            return detected_objects
+            
+        except Exception as e:
+            print(f"❌ VLM analysis error: {e}")
+            # Disable VLM for rest of simulation
+            print("🔇 Disabling VLM for remainder of simulation")
+            self.vlm_analyzer = None
+            return []
+    
+    def step_simulation(self, steps: int = 1):
+        """Advance simulation by specified steps"""
+        for _ in range(steps):
+            if self.physics_client is not None:
+                try:
+                    # Check if still connected
+                    if p.isConnected(self.physics_client):
+                        p.stepSimulation()
+                    else:
+                        print("❌ Physics server disconnected unexpectedly")
+                        self.physics_client = None
+                        raise RuntimeError("Physics server disconnected")
+                except Exception as e:
+                    print(f"❌ Error stepping simulation: {e}")
+                    self.physics_client = None
+                    raise
+            else:
+                raise RuntimeError("Simulation not connected")
+    
+    def get_object_coordinates(self, object_name: Optional[str] = None) -> Dict:
+        """
+        Easy method to get world coordinates of detected objects
+        
+        Args:
+            object_name: Specific object to find, or None for all objects
+            
+        Returns:
+            Dictionary with object coordinates
+        """
+        detected_objects = self.analyze_scene_with_vlm()
+        
+        if object_name:
+            # Find specific object
+            for obj in detected_objects:
+                if object_name.lower() in obj.get('name', '').lower():
+                    coords = obj.get('world_coordinates')
+                    if coords:
+                        return {
+                            'name': obj.get('name'),
+                            'coordinates': (coords['x'], coords['y'], coords['z']),
+                            'reachable': obj.get('reachable', False)
+                        }
+            return {'error': f'Object "{object_name}" not found'}
+        else:
+            # Return all objects
+            result = {}
+            for i, obj in enumerate(detected_objects):
+                coords = obj.get('world_coordinates')
+                name = obj.get('name', f'object_{i}')
+                if coords:
+                    result[name] = {
+                        'coordinates': (coords['x'], coords['y'], coords['z']),
+                        'reachable': obj.get('reachable', False),
+                        'color': obj.get('color', 'unknown')
+                    }
+            return result
+    
+    def run_simulation(self, duration: float = 10.0, vlm_analysis_interval: float = 2.0):
+        """
+        Run the simulation for specified duration
+        
+        Args:
+            duration: Simulation duration in seconds (use float('inf') for infinite)
+            vlm_analysis_interval: How often to run VLM analysis (seconds)
+        """
+        start_time = time.time()
+        last_vlm_time = 0
+        frame_count = 0
+        
+        if duration == float('inf'):
+            print(f"🚀 Starting simulation (infinite duration - press Ctrl+C to stop)...")
+        else:
+            print(f"🚀 Starting simulation for {duration} seconds...")
+        
+        try:
+            while True:
+                current_time = time.time() - start_time
+                
+                # Check duration limit
+                if duration != float('inf') and current_time >= duration:
+                    break
+                
+                # Step simulation
+                self.step_simulation()
+                frame_count += 1
+                
+                # Run VLM analysis at specified intervals
+                if (self.vlm_analyzer and 
+                    current_time - last_vlm_time >= vlm_analysis_interval):
+                    print(f"\n📸 Frame {frame_count}: Running VLM analysis...")
+                    self.analyze_scene_with_vlm()
+                    last_vlm_time = current_time
+                
+                time.sleep(1./240.)  # 240 FPS target
+                
+        except KeyboardInterrupt:
+            print(f"\n⏹️ Simulation interrupted by user after {frame_count} frames")
+        except Exception as e:
+            print(f"\n❌ Simulation error: {e}")
+            print(f"Completed {frame_count} frames before error")
+        
+        print(f"✅ Simulation completed after {frame_count} frames")
+    
+    def close(self):
+        """Clean up and close simulation"""
+        if self.physics_client is not None:
+            try:
+                p.disconnect(self.physics_client)
+                print("🔌 Simulation disconnected")
+            except:
+                print("🔌 Simulation already disconnected")
+            finally:
+                self.physics_client = None
+
+
+class OverheadCamera:
+    """Camera system for capturing overhead workspace images"""
+    
+    def __init__(self, camera_height: float = 1.5, fov: float = 60, 
+                 image_size: Tuple[int, int] = (640, 480)):
+        """
+        Initialize overhead camera
+        
+        Args:
+            camera_height: Height above workspace
+            fov: Field of view in degrees
+            image_size: (width, height) of captured images
+        """
+        self.camera_height = camera_height
+        self.fov = fov
+        self.image_size = image_size
+        
+        # Camera parameters
+        self.camera_target = [0.5, 0.0, 0]  # Center of workspace
+        self.camera_yaw = 0
+        self.camera_pitch = -90  # Looking straight down
+        
+        # Compute matrices
+        self.view_matrix = p.computeViewMatrixFromYawPitchRoll(
+            self.camera_target, self.camera_height, 
+            self.camera_yaw, self.camera_pitch, 0, 2)
+        
+        self.projection_matrix = p.computeProjectionMatrixFOV(
+            fov=self.fov,
+            aspect=self.image_size[0] / self.image_size[1],
+            nearVal=0.1,
+            farVal=3.0
+        )
+    
+    def capture_image(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Capture image from overhead camera
+        
+        Returns:
+            Tuple of (rgb_array, depth_array, segmentation_array)
+        """
+        width, height = self.image_size
+        
+        # Get camera image
+        _, _, rgb_img, depth_img, seg_img = p.getCameraImage(
+            width, height, self.view_matrix, self.projection_matrix)
+        
+        # Convert to numpy arrays
+        rgb_array = np.array(rgb_img).reshape(height, width, 4)[:, :, :3]  # Remove alpha
+        depth_array = np.array(depth_img).reshape(height, width)
+        seg_array = np.array(seg_img).reshape(height, width)
+        
+        return rgb_array, depth_array, seg_array
+
+
+def main():
+    """Main function to run the simulation"""
+    # Load API key from environment variable
+    API_KEY = os.getenv('GOOGLE_AI_API_KEY')
+    
+    if API_KEY and VLM_AVAILABLE:
+        print("🔑 API key found - VLM analysis will be enabled")
+    else:
+        print("⚠️ VLM analysis will be disabled")
+        if not API_KEY:
+            print("   Missing API key: Set GOOGLE_AI_API_KEY in your .env file")
+        if not VLM_AVAILABLE:
+            print("   Missing dependencies: conda env update -n bullet39 --file environment.yml --prune")
+    
+    print("🤖 Initializing Robot Arm Simulation...")
+    
+    # Create simulation with VLM if available
+    sim = RobotArmSimulation(gui_mode=True, api_key=API_KEY if VLM_AVAILABLE else None)
+    
+    # Add objects at random positions instead of fixed ones
+    print("🎲 Generating random objects around robot arm...")
+    created_objects = sim.add_random_objects(num_objects=4)  # Create 4 random objects
+    
+    if created_objects:
+        print(f"✅ Successfully created {len(created_objects)} random objects:")
+        for obj_name in created_objects:
+            print(f"   - {obj_name}")
+    
+    try:
+        # Run simulation with debugging - start with shorter duration
+        sim.run_simulation(duration=float(50), vlm_analysis_interval=20.0)  # Run VLM analysis every 20 seconds
+    except KeyboardInterrupt:
+        print("\n⏹️ Simulation interrupted by user")
+    finally:
+        sim.close()
