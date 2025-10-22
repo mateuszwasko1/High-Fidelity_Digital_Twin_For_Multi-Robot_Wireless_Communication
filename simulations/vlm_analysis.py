@@ -187,11 +187,13 @@ Find objects (cubes/spheres/cylinders) in 160x120 image. Give pixel centers. Ski
         # Default camera parameters for PyBullet overhead camera
         if camera_params is None:
             camera_params = {
-                'fx': 320,  # Focal length X (half of image width for 60° FOV)
-                'fy': 320,  # Focal length Y 
+                'fx': 640,  # Focal length X for 640px width  
+                'fy': 640,  # Focal length Y (same for square pixels)
                 'cx': 320,  # Image center X (width/2)
                 'cy': 240,  # Image center Y (height/2)
-                'scale': 0.002  # Depth scaling factor for PyBullet
+                'near': 0.01,  # Near clipping plane
+                'far': 3.0,   # Far clipping plane
+                'height': 1.5  # Camera height above table
             }
         
         # Step 1: Detect objects with VLM
@@ -206,13 +208,28 @@ Find objects (cubes/spheres/cylinders) in 160x120 image. Give pixel centers. Ski
                 pixel_x = int(obj['center_x'])
                 pixel_y = int(obj['center_y'])
                 
+                print(f"🔍 Debug - Object {obj.get('name', 'Unknown')} detected at pixel ({pixel_x}, {pixel_y})")
+                
                 # Get depth at that pixel
                 if 0 <= pixel_y < depth_image.shape[0] and 0 <= pixel_x < depth_image.shape[1]:
-                    depth_value = depth_image[pixel_y, pixel_x] * camera_params['scale']
+                    # PyBullet depth buffer - let's try different interpretations
+                    raw_depth = depth_image[pixel_y, pixel_x]
+                    
+                    # Use method 2 (linearized depth buffer) 
+                    near = camera_params['near']
+                    far = camera_params['far']
+                    if raw_depth < 1.0:
+                        actual_depth = near / (1.0 - raw_depth * (1.0 - near/far))
+                    else:
+                        actual_depth = far
+                    
+                    print(f"🔍 Debug - Distance from camera: {actual_depth:.4f}m, Raw depth: {raw_depth:.4f}")
                     
                     # Convert to world coordinates
                     world_x, world_y, world_z = self.pixel_to_world_coordinates(
-                        (pixel_x, pixel_y), depth_value, camera_params)
+                        (pixel_x, pixel_y), actual_depth, camera_params)
+                    
+                    print(f"🔍 Debug - World coordinates: ({world_x:.4f}, {world_y:.4f}, {world_z:.4f})")
                     
                     # Add world coordinates to object
                     obj['world_coordinates'] = {
@@ -260,28 +277,44 @@ Find objects (cubes/spheres/cylinders) in 160x120 image. Give pixel centers. Ski
         return obj
     
     def pixel_to_world_coordinates(self, pixel_coords: Tuple[int, int], 
-                                 depth_value: float, 
+                                 distance_from_camera: float, 
                                  camera_params: Dict) -> Tuple[float, float, float]:
         """
-        Convert pixel coordinates to world coordinates
+        Convert pixel coordinates to world coordinates for overhead camera
         
         Args:
             pixel_coords: (x, y) pixel coordinates
-            depth_value: Depth at that pixel
+            distance_from_camera: Distance from camera to object in meters
             camera_params: Camera intrinsic parameters
             
         Returns:
             (x, y, z) world coordinates
         """
-        # This is a simplified conversion - you'll need proper camera calibration
-        # for accurate results
         px, py = pixel_coords
         
-        # Basic conversion (you'll need to calibrate this properly)
-        # These are placeholder calculations
-        world_x = (px - camera_params.get('cx', 320)) * depth_value / camera_params.get('fx', 500)
-        world_y = (py - camera_params.get('cy', 240)) * depth_value / camera_params.get('fy', 500)
-        world_z = depth_value
+        # Camera is 1.5m above table, looking at center [0.5, 0.0, 0]
+        camera_height = camera_params.get('height', 1.5)
+        
+        # Calculate object height above table (camera height - distance from camera)
+        object_height = camera_height - distance_from_camera
+        
+        # Camera viewing area matches object spawn area:
+        # X: 0.0 to 1.0 meters
+        # Y: -0.5 to 0.5 meters  
+        # Image is 640x480 pixels
+        
+        image_width = 640
+        image_height = 480
+        
+        # Convert pixel coordinates to world coordinates
+        # Pixel (0,0) = World (0.0, 0.5)  [top-left]
+        # Pixel (640,0) = World (1.0, 0.5)  [top-right]  
+        # Pixel (0,480) = World (0.0, -0.5)  [bottom-left]
+        # Pixel (640,480) = World (1.0, -0.5)  [bottom-right]
+        
+        world_x = (px / image_width) * 1.0  # 0 to 1 meter
+        world_y = 0.5 - (py / image_height) * 1.0  # 0.5 to -0.5 meter (inverted Y)
+        world_z = object_height
         
         return world_x, world_y, world_z
 

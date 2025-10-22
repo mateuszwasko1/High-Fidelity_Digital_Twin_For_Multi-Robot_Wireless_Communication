@@ -55,8 +55,14 @@ class RobotArmSimulation:
         self.robot_id = None
         self.plane_id = None
         self.objects = {}
+        self.containers = {}  # Sorting bins
         self.camera = None
         self.vlm_analyzer = None
+        
+        # Robot control parameters
+        self.num_joints = 7  # Franka Panda has 7 arm joints
+        self.end_effector_link = 11  # Franka Panda end-effector
+        self.gripper_joints = [9, 10]  # Franka Panda gripper finger joints
         
         # Initialize VLM if API key provided and VLM is available
         if api_key and VLM_AVAILABLE and VLMAnalyzer:
@@ -148,9 +154,55 @@ class RobotArmSimulation:
         print(f"✅ Environment loaded - Robot ID: {self.robot_id}")
     
     def _setup_camera(self):
-        """Initialize overhead camera system"""
+        """Initialize camera systems"""
+        # Overhead camera for scene survey
         self.camera = OverheadCamera()
-        print("✅ Camera system initialized")
+        print("✅ Overhead camera initialized")
+    
+    def add_sorting_containers(self):
+        """Add labeled containers for sorting objects"""
+        container_positions = {
+            'red_bin': [-0.3, 0.5, 0.1],
+            'blue_bin': [-0.3, -0.5, 0.1],
+            'green_bin': [-0.6, 0.5, 0.1],
+            'yellow_bin': [-0.6, -0.5, 0.1]
+        }
+        
+        container_colors = {
+            'red_bin': [1, 0, 0, 0.5],
+            'blue_bin': [0, 0, 1, 0.5],
+            'green_bin': [0, 1, 0, 0.5],
+            'yellow_bin': [1, 1, 0, 0.5]
+        }
+        
+        print("📦 Adding sorting containers...")
+        for name, pos in container_positions.items():
+            # Create semi-transparent box as container
+            visual_shape = p.createVisualShape(
+                p.GEOM_BOX, 
+                halfExtents=[0.15, 0.15, 0.05],
+                rgbaColor=container_colors[name]
+            )
+            collision_shape = p.createCollisionShape(
+                p.GEOM_BOX,
+                halfExtents=[0.15, 0.15, 0.05]
+            )
+            
+            container_id = p.createMultiBody(
+                baseMass=0,  # Static
+                baseCollisionShapeIndex=collision_shape,
+                baseVisualShapeIndex=visual_shape,
+                basePosition=pos
+            )
+            
+            self.containers[name] = {
+                'id': container_id,
+                'position': pos,
+                'color': container_colors[name][:3]
+            }
+            print(f"   ✅ {name} at {pos}")
+        
+        return list(self.containers.keys())
     
     def generate_random_position(self, min_radius: float = 0.2, max_radius: float = 0.5, 
                                height_range: Tuple[float, float] = (0.05, 0.15)) -> List[float]:
@@ -318,6 +370,123 @@ class RobotArmSimulation:
         """
         return self.camera.capture_image()
     
+
+    
+
+    
+
+    
+    def determine_target_container(self, classification: Dict) -> str:
+        """
+        Decide which container to use based on object classification
+        
+        Args:
+            classification: Object classification result
+            
+        Returns:
+            Container name
+        """
+        color = classification.get('color', 'unknown').lower()
+        
+        # Simple color-based sorting
+        if 'red' in color:
+            return 'red_bin'
+        elif 'blue' in color:
+            return 'blue_bin'
+        elif 'green' in color:
+            return 'green_bin'
+        elif 'yellow' in color:
+            return 'yellow_bin'
+        else:
+            # Default to red bin for unknown colors
+            return 'red_bin'
+    
+    def move_to_position(self, target_pos: List[float], duration: float = 2.0):
+        """
+        Move end-effector to target position using inverse kinematics
+        
+        Args:
+            target_pos: [x, y, z] target position
+            duration: Time to complete motion (seconds)
+        """
+        print(f"🤖 Moving to position ({target_pos[0]:.3f}, {target_pos[1]:.3f}, {target_pos[2]:.3f})...")
+        
+        # Compute inverse kinematics
+        target_orientation = p.getQuaternionFromEuler([0, np.pi, 0])  # Gripper pointing down
+        joint_poses = p.calculateInverseKinematics(
+            self.robot_id,
+            self.end_effector_link,
+            target_pos,
+            target_orientation,
+            maxNumIterations=100,
+            residualThreshold=0.001
+        )
+        
+        # Set joint positions for arm joints only (first 7 joints)
+        for i in range(self.num_joints):
+            p.setJointMotorControl2(
+                self.robot_id,
+                i,
+                p.POSITION_CONTROL,
+                targetPosition=joint_poses[i],
+                force=500,
+                maxVelocity=1.0
+            )
+        
+        # Simulate motion with physics
+        steps = int(duration * 240)  # 240 Hz physics
+        for step in range(steps):
+            self.step_simulation()
+            time.sleep(1./240.)
+        
+        # Get final position
+        link_state = p.getLinkState(self.robot_id, self.end_effector_link)
+        final_pos = link_state[0]
+        error = np.linalg.norm(np.array(final_pos) - np.array(target_pos))
+        print(f"✅ Reached position (error: {error*100:.1f}cm)")
+    
+    def grasp_object(self):
+        """Close gripper to grasp object"""
+        print("✋ Closing gripper to grasp object...")
+        
+        # Close gripper fingers
+        for joint in self.gripper_joints:
+            p.setJointMotorControl2(
+                self.robot_id,
+                joint,
+                p.POSITION_CONTROL,
+                targetPosition=0.0,  # Closed position
+                force=50
+            )
+        
+        # Simulate gripper closing
+        for _ in range(60):  # 0.25 seconds at 240 Hz
+            self.step_simulation()
+            time.sleep(1./240.)
+        
+        print("✅ Object grasped")
+    
+    def release_object(self):
+        """Open gripper to release object"""
+        print("✋ Opening gripper to release object...")
+        
+        # Open gripper fingers
+        for joint in self.gripper_joints:
+            p.setJointMotorControl2(
+                self.robot_id,
+                joint,
+                p.POSITION_CONTROL,
+                targetPosition=0.04,  # Open position (4cm)
+                force=50
+            )
+        
+        # Simulate gripper opening
+        for _ in range(60):  # 0.25 seconds at 240 Hz
+            self.step_simulation()
+            time.sleep(1./240.)
+        
+        print("✅ Object released")
+    
     def analyze_scene_with_vlm(self) -> List[Dict]:
         """
         Analyze current scene using VLM and get world coordinates
@@ -425,6 +594,83 @@ class RobotArmSimulation:
                     }
             return result
     
+    def pick_and_sort_workflow(self):
+        """
+        Complete pick-and-sort workflow:
+        1. Scan workspace with overhead camera
+        2. Detect objects
+        3. For each object:
+           a. Move arm above object
+           b. Take close-up photo with wrist camera
+           c. Classify object
+           d. Pick up object
+           e. Move to appropriate container
+           f. Release object
+        """
+        if not self.vlm_analyzer:
+            print("❌ Cannot run pick-and-sort without VLM")
+            return
+        
+        print("\n" + "="*60)
+        print("🤖 STARTING PICK-AND-SORT WORKFLOW")
+        print("="*60)
+        
+        # Step 1: Scan workspace with overhead camera
+        print("\n📸 Step 1: Scanning workspace...")
+        detected_objects = self.analyze_scene_with_vlm()
+        
+        if not detected_objects:
+            print("❌ No objects detected in workspace")
+            return
+        
+        # Step 2: Process each object
+        for i, obj in enumerate(detected_objects):
+            print(f"\n{'='*60}")
+            print(f"🎯 Processing object {i+1}/{len(detected_objects)}")
+            print(f"{'='*60}")
+            
+            coords = obj.get('world_coordinates')
+            if not coords or not obj.get('reachable', False):
+                print(f"⚠️ Object not reachable, skipping...")
+                continue
+            
+            obj_pos = [coords['x'], coords['y'], coords['z']]
+            print(f"📍 Target position: ({coords['x']:.2f}, {coords['y']:.2f}, {coords['z']:.2f})")
+            
+            # Step 3a: Move arm above object
+            approach_pos = [coords['x'], coords['y'], coords['z'] + 0.2]
+            self.move_to_position(approach_pos, duration=2.0)
+            
+            # Step 3b: Take close-up photo with wrist camera
+            print("📸 Taking close-up photo...")
+            classification = self.classify_object_with_wrist_camera()
+            
+            # Step 3c: Determine target container
+            target_container = self.determine_target_container(classification)
+            print(f"🎯 Target container: {target_container}")
+            
+            # Step 3d: Move down and grasp
+            self.move_to_position(obj_pos, duration=1.0)
+            self.grasp_object()
+            
+            # Step 3e: Lift and move to container
+            lift_pos = [coords['x'], coords['y'], coords['z'] + 0.3]
+            self.move_to_position(lift_pos, duration=1.0)
+            
+            container_pos = self.containers[target_container]['position']
+            drop_pos = [container_pos[0], container_pos[1], container_pos[2] + 0.3]
+            self.move_to_position(drop_pos, duration=2.0)
+            
+            # Step 3f: Release object
+            self.release_object()
+            
+            print(f"✅ Object {i+1} sorted successfully!")
+        
+        print(f"\n{'='*60}")
+        print(f"✅ PICK-AND-SORT WORKFLOW COMPLETED")
+        print(f"   Processed {len(detected_objects)} objects")
+        print(f"{'='*60}\n")
+    
     def run_simulation(self, duration: float = 10.0, vlm_analysis_interval: float = 2.0):
         """
         Run the simulation for specified duration
@@ -513,7 +759,7 @@ class OverheadCamera:
         self.projection_matrix = p.computeProjectionMatrixFOV(
             fov=self.fov,
             aspect=self.image_size[0] / self.image_size[1],
-            nearVal=0.1,
+            nearVal=0.01,  # 1cm - much closer to capture objects on table
             farVal=3.0
         )
     
@@ -539,7 +785,11 @@ class OverheadCamera:
 
 
 def main():
-    """Main function to run the simulation"""
+    """Main function to run the pick-and-sort simulation"""
+    print("="*70)
+    print("🤖 ROBOT ARM PICK-AND-SORT SIMULATION")
+    print("="*70)
+    
     # Load API key from environment variable
     API_KEY = os.getenv('GOOGLE_AI_API_KEY')
     
@@ -552,13 +802,18 @@ def main():
         if not VLM_AVAILABLE:
             print("   Missing dependencies: conda env update -n bullet39 --file environment.yml --prune")
     
-    print("🤖 Initializing Robot Arm Simulation...")
+    print("🤖 Initializing Robot Arm Simulation for Pick-and-Sort...")
     
     # Create simulation with VLM if available
     sim = RobotArmSimulation(gui_mode=True, api_key=API_KEY if VLM_AVAILABLE else None)
     
-    # Add objects at random positions instead of fixed ones
-    print("🎲 Generating random objects around robot arm...")
+    # Add sorting containers
+    print("\n📦 Setting up sorting system...")
+    containers = sim.add_sorting_containers()
+    print(f"✅ Created {len(containers)} sorting bins")
+    
+    # Add objects at random positions
+    print("\n🎲 Generating random objects around robot arm...")
     created_objects = sim.add_random_objects(num_objects=4)  # Create 4 random objects
     
     if created_objects:
@@ -566,10 +821,41 @@ def main():
         for obj_name in created_objects:
             print(f"   - {obj_name}")
     
+    # Initialize gripper to open position
+    print("\n🤖 Initializing robot gripper...")
+    for joint in sim.gripper_joints:
+        p.setJointMotorControl2(
+            sim.robot_id,
+            joint,
+            p.POSITION_CONTROL,
+            targetPosition=0.04,  # Open position
+            force=50
+        )
+    
+    # Allow physics to settle
+    print("⏳ Settling physics...")
+    for _ in range(240):  # 1 second at 240 Hz
+        sim.step_simulation()
+    
     try:
-        # Run simulation with debugging - start with shorter duration
-        sim.run_simulation(duration=float(50), vlm_analysis_interval=20.0)  # Run VLM analysis every 20 seconds
+        if API_KEY and VLM_AVAILABLE:
+            # Run pick-and-sort workflow
+            sim.pick_and_sort_workflow()
+            
+            # Keep simulation running to view results
+            print("\n👀 Keeping simulation open to view results...")
+            print("   Press Ctrl+C to exit")
+            sim.run_simulation(duration=float('inf'), vlm_analysis_interval=999999)
+        else:
+            print("\n⚠️ Cannot run pick-and-sort without VLM")
+            print("   Running standard simulation instead...")
+            sim.run_simulation(duration=float(30), vlm_analysis_interval=5.0)
+            
     except KeyboardInterrupt:
         print("\n⏹️ Simulation interrupted by user")
     finally:
         sim.close()
+
+
+if __name__ == "__main__":
+    main()
