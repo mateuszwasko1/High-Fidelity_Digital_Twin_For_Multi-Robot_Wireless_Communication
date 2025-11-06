@@ -14,7 +14,8 @@ class Object:
     """
     
     def __init__(self, color: str, shape: str, location: Tuple[float, float, float], 
-                 name: Optional[str] = None, reachable: bool = True, image: Optional[np.ndarray] = None):
+                 name: Optional[str] = None, reachable: bool = True, image: Optional[np.ndarray] = None,
+                 height: Optional[float] = None):
         """
         Initialize an object
         
@@ -25,6 +26,7 @@ class Object:
             name: Optional descriptive name
             reachable: Whether the object is reachable by the robot
             image: RGB image of the object (numpy array)
+            height: Estimated object height in meters (from depth data)
         """
         self.color = color
         self.shape = shape
@@ -32,6 +34,7 @@ class Object:
         self.name = name if name else f"{color} {shape}"
         self.reachable = reachable
         self.image = image  # Store RGB image for VLM analysis later
+        self.height = height  # Object height in meters
     
     def __repr__(self) -> str:
         """String representation of the object"""
@@ -41,7 +44,8 @@ class Object:
 
 
 def find_closest_object(camera, robot_id: int, camera_height: float = 1.5, 
-                        exclude_ids: List[int] = None, debug: bool = False) -> Optional[Object]:
+                        exclude_ids: List[int] = None, exclude_regions: List[Tuple[float, float, float, float]] = None,
+                        debug: bool = False) -> Optional[Object]:
     """
     Find the closest object to the robot using depth clustering
     
@@ -50,19 +54,14 @@ def find_closest_object(camera, robot_id: int, camera_height: float = 1.5,
         robot_id: PyBullet robot ID to mask out
         camera_height: Height of camera above ground (meters)
         exclude_ids: List of object IDs to exclude (e.g., containers)
+        exclude_regions: List of (x_min, x_max, y_min, y_max) regions to mask out (e.g., bin areas)
         debug: If True, show debug visualizations
         
     Returns:
         Closest Object instance, or None if no objects detected
     """
     # Get masked RGB and depth images
-    rgb, depth = camera.get_cropped_image(robot_id=robot_id, exclude_ids=exclude_ids)
-    
-    if debug:
-        print(f"\n📊 Debug Info:")
-        print(f"   Depth range: {np.nanmin(depth):.3f}m to {np.nanmax(depth):.3f}m")
-        print(f"   Camera height: {camera_height}m")
-        print(f"   Non-NaN pixels: {(~np.isnan(depth)).sum()}")
+    rgb, depth = camera.get_cropped_image(robot_id=robot_id, exclude_ids=exclude_ids, exclude_regions=exclude_regions)
     
     # Filter out floor and invalid pixels
     # Camera is at 1.5m, table is at 0m, objects are ~0.05-0.15m above table
@@ -73,19 +72,6 @@ def find_closest_object(camera, robot_id: int, camera_height: float = 1.5,
     # Create mask for object pixels (closer than floor, not NaN)
     valid_mask = ~np.isnan(depth)
     object_mask = valid_mask & (depth < floor_distance - object_height_range[0])
-    
-    if debug:
-        print(f"   Object pixels: {object_mask.sum()}")
-        cv2.imshow("RGB", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
-        
-        # Visualize depth (normalize for display)
-        depth_vis = depth.copy()
-        depth_vis[np.isnan(depth_vis)] = depth_vis[~np.isnan(depth_vis)].max()
-        depth_vis = ((depth_vis - depth_vis.min()) / (depth_vis.max() - depth_vis.min()) * 255).astype(np.uint8)
-        cv2.imshow("Depth", depth_vis)
-        
-        cv2.imshow("Object Mask", (object_mask * 255).astype(np.uint8))
-        cv2.waitKey(1000)  # Show for 1 second
     
     # Convert boolean mask to uint8 for OpenCV
     object_mask_uint8 = (object_mask * 255).astype(np.uint8)
@@ -117,9 +103,23 @@ def find_closest_object(camera, robot_id: int, camera_height: float = 1.5,
         cx, cy = centroids[label_id]
         cx, cy = int(cx), int(cy)
         
-        # Get average depth at this object
+        # Get depth statistics for this object
         object_pixels = (labels == label_id)
-        avg_depth = np.nanmean(depth[object_pixels])
+        object_depths = depth[object_pixels]
+        object_depths = object_depths[~np.isnan(object_depths)]  # Remove NaN values
+        
+        if len(object_depths) == 0:
+            continue  # Skip if no valid depth data
+        
+        # Calculate object height from depth range
+        # Min depth = top of object (closest to camera)
+        # Max depth = bottom of object (furthest from camera)
+        min_depth = np.min(object_depths)
+        max_depth = np.max(object_depths)
+        object_height = max_depth - min_depth  # Height in meters
+        
+        # Use average depth for position calculation
+        avg_depth = np.mean(object_depths)
         
         # Convert image coordinates to world coordinates
         world_pos = _image_to_world(cx, cy, avg_depth, camera)
@@ -141,28 +141,25 @@ def find_closest_object(camera, robot_id: int, camera_height: float = 1.5,
                 location=world_pos,
                 name="detected_object",
                 reachable=True,
-                image=object_image
+                image=object_image,
+                height=object_height
             )
-    
-    if debug and closest_object:
-        print(f"   Closest object: {closest_object.name} at distance {min_distance:.3f}m")
-        # Show the cropped object image
-        if closest_object.image is not None:
-            cv2.imshow("Closest Object Image", cv2.cvtColor(closest_object.image, cv2.COLOR_RGB2BGR))
-            print(f"   Image shape: {closest_object.image.shape}")
-            cv2.waitKey(2000)  # Show for 2 seconds
     
     return closest_object
 
 
 def _image_to_world(px: int, py: int, depth: float, camera) -> Tuple[float, float, float]:
     """
-    Convert pixel coordinates + depth to world coordinates
+    Convert pixel coordinates + depth to world coordinates using proper projection matrices
+    
+    This method uses PyBullet's view and projection matrices to accurately transform
+    pixel coordinates back to 3D world space. This approach is realistic and matches
+    what would be done with a real camera using calibrated intrinsic/extrinsic matrices.
     
     Args:
         px: Pixel x coordinate
         py: Pixel y coordinate  
-        depth: Depth in meters
+        depth: Depth in meters (linear distance from camera)
         camera: OverheadCamera instance
         
     Returns:
@@ -171,45 +168,71 @@ def _image_to_world(px: int, py: int, depth: float, camera) -> Tuple[float, floa
     # Get image dimensions
     width, height = camera.image_size
     
+    # Calculate camera position in world space
+    # Camera is at target + offset in the direction it's looking from
+    target = np.array(camera.camera_target)
+    
+    # Convert yaw/pitch to camera position
+    # yaw=270° pitch=-90° means looking straight down from above
+    yaw_rad = np.deg2rad(camera.camera_yaw)
+    pitch_rad = np.deg2rad(camera.camera_pitch)
+    
+    # For PyBullet's computeViewMatrixFromYawPitchRoll:
+    # - pitch=-90° means looking straight down
+    # - yaw=270° means rotated 270° around Z axis
+    # - distance is camera_height above the target
+    # So camera is simply at: target + [0, 0, camera_height]
+    camera_pos = target + np.array([0, 0, camera.camera_height])
+    
     # Normalize pixel coordinates to [-1, 1]
-    # OpenCV/PyBullet: origin at top-left
-    nx = (px / width) * 2 - 1
-    ny = (py / height) * 2 - 1
+    # Origin at center, x right, y up (image space has y down)
+    nx = (2.0 * px / width) - 1.0
+    ny = 1.0 - (2.0 * py / height)  # Flip Y
     
-    # Compute FOV angle in radians
+    # Calculate the viewing frustum size at the given depth
+    # Using pinhole camera model with field of view
     fov_rad = np.deg2rad(camera.fov)
-    
-    # At the given depth, compute the size of the viewing plane
     aspect = width / height
-    view_height = 2 * depth * np.tan(fov_rad / 2)
+    
+    # Height and width of the view plane at distance 'depth'
+    view_height = 2.0 * depth * np.tan(fov_rad / 2.0)
     view_width = view_height * aspect
     
-    # Convert normalized coords to view-plane offsets  
-    # After testing: the correct mapping for yaw=270, pitch=-90 camera
-    dx = -nx * (view_width / 2)   # Image right/left → World forward/back (inverted)
-    dy = -ny * (view_height / 2)  # Image up/down → World left/right (inverted)  
+    # Position on the view plane relative to its center
+    view_x = nx * (view_width / 2.0)
+    view_y = ny * (view_height / 2.0)
     
-    # Camera target is the world position we're looking at
-    target_x, target_y, target_z = camera.camera_target
+    # Create camera coordinate system
+    # Forward: from camera to target (looking direction) - straight down for pitch=-90°
+    forward = target - camera_pos  # Points from [0.5, 0, 1.5] to [0.5, 0, 0] = [0, 0, -1.5]
+    forward = forward / np.linalg.norm(forward)  # Normalized: [0, 0, -1]
     
-    # Apply offsets to camera target position
-    world_x = target_x + dx
-    world_y = target_y + dy
+    # For yaw=270°, the camera is rotated 270° around the Z axis
+    # This affects which direction is "right" in the image
+    # yaw=270° means the right direction in the image corresponds to +X in world
+    # and up direction in the image corresponds to -Y in world
     
-    # Calibration offsets (empirically determined)
-    # Fine-tuned to match actual object positions
-    world_x += 0.05  # Move right by 5cm
-    world_y += 0.02  # Move up by 2cm (reduced from 5cm)
+    # Right vector (rotated by yaw around Z axis)
+    yaw_rad = np.deg2rad(camera.camera_yaw)
+    right = np.array([np.cos(yaw_rad), np.sin(yaw_rad), 0])
     
-    # Use fixed Z height instead of depth-based calculation for consistency
-    # Objects spawn between 0.05-0.15m, so use middle value
-    world_z = 0.10  # Fixed height at 10cm above ground
+    # Up vector in image space (perpendicular to both forward and right)
+    up = np.cross(right, forward)  # Right-handed coordinate system
     
-    print(f"   DEBUG TRANSFORM: pixel=({px},{py}), norm=({nx:.2f},{ny:.2f}), offset=({dx:.2f},{dy:.2f}), world=({world_x:.2f},{world_y:.2f},{world_z:.2f})")
+    # Point in world space:
+    # Start at camera position, move forward by depth, then offset by view_x and view_y
+    world_point = camera_pos + forward * depth + right * view_x + up * view_y
+    
+    world_x = world_point[0]
+    world_y = world_point[1]
+    world_z = world_point[2]
+    
+    # Small calibration adjustments (systematic errors from calibration test)
+    world_x -= 0.009  # Correct for ~9mm X offset
+    # Note: Z calibration was done for objects at 0.10m height
+    # For objects at different heights, the depth measurement should be accurate
     
     return (world_x, world_y, world_z)
-
-
 def _extract_object_image(rgb: np.ndarray, labels: np.ndarray, label_id: int, 
                          padding: int = 10) -> np.ndarray:
     """
@@ -251,13 +274,14 @@ def _extract_object_image(rgb: np.ndarray, labels: np.ndarray, label_id: int,
     # Set background pixels to white
     cropped[~cropped_mask] = [255, 255, 255]
     
-    # Resize to 224x224 for better VLM performance
+    # Resize to 224x224 for VLM performance (faster than 336, still good quality)
+    # CLIP works well with 224 - provides good balance of speed and accuracy
     target_size = 224
     cropped_resized = cv2.resize(cropped, (target_size, target_size), interpolation=cv2.INTER_LANCZOS4)
     
-    # Display the resized cropped image
-    cv2.imshow("Detected Object (Cropped)", cv2.cvtColor(cropped_resized, cv2.COLOR_RGB2BGR))
-    cv2.waitKey(1)  # Allow window to update
+    # Debug window disabled for performance
+    # cv2.imshow("Detected Object (Cropped)", cv2.cvtColor(cropped_resized, cv2.COLOR_RGB2BGR))
+    # cv2.waitKey(1)
     
     return cropped_resized
 

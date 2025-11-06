@@ -5,6 +5,7 @@ Handles robot arm motion control using Inverse Kinematics
 
 import pybullet as p
 import numpy as np
+import time
 from typing import Tuple, List, Optional
 
 
@@ -13,7 +14,7 @@ class ArmController:
     Controls robot arm movement using inverse kinematics
     """
     
-    def __init__(self, robot_id: int, end_effector_link_index: int = 8, gripper_joints: List[int] = [9, 10]):
+    def __init__(self, robot_id: int, end_effector_link_index: int = 8, gripper_joints: List[int] = [9, 10], verbose: bool = True):
         """
         Initialize the arm controller
         
@@ -21,10 +22,12 @@ class ArmController:
             robot_id: PyBullet robot body ID
             end_effector_link_index: Link index of the end effector (gripper base)
             gripper_joints: Joint indices for gripper fingers
+            verbose: Whether to print debug information
         """
         self.robot_id = robot_id
         self.end_effector_link = end_effector_link_index
         self.gripper_joints = gripper_joints
+        self.verbose = verbose
         
         # Get controllable joints (exclude fixed joints and gripper)
         self.arm_joints = []
@@ -38,11 +41,12 @@ class ArmController:
             if joint_type in [p.JOINT_REVOLUTE, p.JOINT_PRISMATIC] and i not in gripper_joints:
                 self.arm_joints.append(i)
         
-        print(f"🦾 Arm Controller initialized:")
-        print(f"   Robot ID: {robot_id}")
-        print(f"   End effector link: {end_effector_link_index}")
-        print(f"   Arm joints: {self.arm_joints}")
-        print(f"   Gripper joints: {gripper_joints}")
+        if self.verbose:
+            print(f"🦾 Arm Controller initialized:")
+            print(f"   Robot ID: {robot_id}")
+            print(f"   End effector link: {end_effector_link_index}")
+            print(f"   Arm joints: {self.arm_joints}")
+            print(f"   Gripper joints: {gripper_joints}")
     
     def move_to_position(self, target_pos: Tuple[float, float, float], 
                          target_orientation: Optional[Tuple[float, float, float, float]] = None,
@@ -52,33 +56,59 @@ class ArmController:
         
         Args:
             target_pos: Target (x, y, z) position in world coordinates
-            target_orientation: Target orientation as quaternion (x, y, z, w). If None, uses downward orientation
+            target_orientation: Target orientation as quaternion (x, y, z, w). If None, uses horizontal gripper orientation
             max_steps: Maximum simulation steps to reach target
             threshold: Distance threshold to consider target reached (meters)
             
         Returns:
             True if target reached within threshold, False otherwise
         """
-        # Default to pointing downward if no orientation specified
-        if target_orientation is None:
-            # Point straight down - this is critical!
-            target_orientation = p.getQuaternionFromEuler([np.pi, 0, 0])  # Rotated 180° around X to point down
-        
-        print(f"\n🎯 Moving to position: {target_pos}")
-        print(f"   Target orientation: {target_orientation}")
-        
         # Check robot base position
         robot_pos = p.getBasePositionAndOrientation(self.robot_id)[0]
-        print(f"   Robot base at: {robot_pos}")
         distance_from_base = np.linalg.norm(np.array(target_pos[:2]) - np.array(robot_pos[:2]))
-        print(f"   Distance from base (XY): {distance_from_base:.3f}m")
+        
+        # Calculate orientation if not specified
+        if target_orientation is None:
+            # ALWAYS use horizontal gripper orientation (fingers left-right)
+            # This simplifies grasping and avoids complex edge alignment issues
+            yaw = 0.0  # Gripper pointing forward, fingers left-right
+            roll = 0.0
+            
+            target_orientation = p.getQuaternionFromEuler([np.pi, 0, yaw + roll])
+            
+            if self.verbose:
+                print(f"\n🎯 Moving to position: {target_pos}")
+                print(f"   Robot base: {robot_pos}")
+                print(f"   🤲 Horizontal gripper: yaw={np.degrees(yaw):.1f}°, roll={np.degrees(roll):.1f}°")
+        else:
+            if self.verbose:
+                print(f"\n🎯 Moving to position: {target_pos}")
+                print(f"   Using provided orientation: {target_orientation}")
+        
+        if self.verbose:
+            print(f"   Robot base at: {robot_pos}")
+            print(f"   Distance from base (XY): {distance_from_base:.3f}m")
         
         # Define lower limits for arm joints to encourage proper elbow configuration
         # This helps the arm bend "downward" naturally for picking
         lower_limits = [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]
         upper_limits = [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
         joint_ranges = [5.8, 3.5, 5.8, 3.0, 5.8, 3.8, 5.8]
-        rest_poses = [0, -0.785, 0, -2.356, 0, 1.571, 0.785]  # Good picking configuration
+        
+        # Adaptive rest pose based on target direction
+        # For backwards reaches (X < 0), use backwards-facing rest pose
+        # For side reaches, rotate base joint (joint 0) toward target
+        dx = target_pos[0] - robot_pos[0]
+        dy = target_pos[1] - robot_pos[1]
+        
+        if target_pos[0] < 0:  # Backwards reach
+            base_rotation = np.arctan2(dy, dx)
+            # Use default rest pose for backwards - works best based on testing
+            rest_poses = [0, -0.785, 0, -2.356, 0, 1.571, 0.785]
+        else:  # Forward reach
+            base_rotation = np.arctan2(dy, dx)
+            # Use adaptive rest pose that points toward the target
+            rest_poses = [base_rotation, -0.785, 0, -2.356, 0, 1.571, 0.785]
         
         # Calculate IK solution with joint limits and rest pose
         joint_poses = p.calculateInverseKinematics(
@@ -107,49 +137,61 @@ class ArmController:
                 )
         
         # Debug: print target joint angles
-        print(f"   Target joint angles: {[f'{joint_poses[j]:.3f}' for j in self.arm_joints]}")
+        if self.verbose:
+            print(f"   Target joint angles: {[f'{joint_poses[j]:.3f}' for j in self.arm_joints]}")
         
-        # Simulate until target reached or max steps
+        # Move to target position
+        for joint_idx, joint in enumerate(self.arm_joints):
+            p.setJointMotorControl2(
+                self.robot_id,
+                joint,
+                p.POSITION_CONTROL,
+                targetPosition=joint_poses[joint_idx],
+                force=200
+            )
+        
+        # Simulation loop to reach target
         for step in range(max_steps):
             p.stepSimulation()
             
-            # Check current end effector position every 20 steps
-            if step % 20 == 0:
-                current_pos = p.getLinkState(self.robot_id, self.end_effector_link)[0]
-                distance = np.linalg.norm(np.array(current_pos) - np.array(target_pos))
-                
-                if step % 100 == 0:
+            # Check if we've reached the target
+            current_pos = p.getLinkState(self.robot_id, self.end_effector_link)[0]
+            distance = np.linalg.norm(np.array(target_pos) - np.array(current_pos))
+            
+            # Print progress every 100 steps
+            if self.verbose and step % 100 == 0:
                     print(f"   Step {step}: distance = {distance:.4f}m, current pos = ({current_pos[0]:.3f}, {current_pos[1]:.3f}, {current_pos[2]:.3f})")
             
             if distance < threshold:
-                print(f"   ✅ Reached target in {step} steps (distance: {distance:.4f}m)")
+                if self.verbose:
+                    print(f"   ✅ Reached target in {step} steps (distance: {distance:.4f}m)")
                 return True
         
-        # Didn't reach target in time
-        current_pos = p.getLinkState(self.robot_id, self.end_effector_link)[0]
-        distance = np.linalg.norm(np.array(current_pos) - np.array(target_pos))
-        print(f"   ⚠️ Timeout after {max_steps} steps (distance: {distance:.4f}m)")
+        # If we didn't reach the target, print warning
+        distance = np.linalg.norm(np.array(target_pos) - np.array(current_pos))
+        if self.verbose:
+            print(f"   ⚠️ Timeout after {max_steps} steps (distance: {distance:.4f}m)")
+        
         return False
     
-    def open_gripper(self, steps: int = 60) -> None:
+    def open_gripper(self):
         """
-        Open the gripper
-        
-        Args:
-            steps: Number of simulation steps to complete the action
+        Open gripper as wide as possible to avoid collisions with objects.
+        Franka Panda gripper maximum opening is 0.08m (8cm between fingers).
         """
-        print("   🖐️  Opening gripper...")
-        for joint_idx in self.gripper_joints:
-            p.setJointMotorControl2(
-                self.robot_id,
-                joint_idx,
-                p.POSITION_CONTROL,
-                targetPosition=0.08,  # Increased from 0.04 to 0.08 - open MUCH wider
-                force=100
-            )
-        
-        for _ in range(steps):
+        if self.verbose:
+            print("\n   🖐️  Opening gripper fully...")
+        for _ in range(200):  # Extra steps to ensure maximum opening
+            for joint in self.gripper_joints:
+                p.setJointMotorControl2(
+                    bodyUniqueId=self.robot_id,
+                    jointIndex=joint,
+                    controlMode=p.POSITION_CONTROL,
+                    targetPosition=0.04,  # Maximum opening (each finger moves 0.04m from center = 8cm total)
+                    force=300  # Very strong force to ensure maximum opening
+                )
             p.stepSimulation()
+            time.sleep(1/240)
     
     def close_gripper(self, steps: int = 60, force_threshold: float = 10.0) -> bool:
         """
@@ -162,7 +204,6 @@ class ArmController:
         Returns:
             True if object detected (force applied), False otherwise
         """
-        print("   ✊ Closing gripper...")
         object_detected = False
         
         for step in range(steps):
@@ -173,7 +214,7 @@ class ArmController:
                     joint_idx,
                     p.POSITION_CONTROL,
                     targetPosition=0.0,  # Closed position
-                    force=100
+                    force=100  # Original force value
                 )
             
             p.stepSimulation()
@@ -185,14 +226,15 @@ class ArmController:
                     applied_force = abs(joint_state[3])  # Reaction force
                     
                     if applied_force > force_threshold:
-                        print(f"      ✅ Object gripped! (force: {applied_force:.1f}N at step {step})")
+                        if self.verbose:
+                            print(f"      ✅ Object gripped! (force: {applied_force:.1f}N at step {step})")
                         object_detected = True
                         # Continue closing a bit more to secure grip
                         for _ in range(20):
                             p.stepSimulation()
                         return True
         
-        if not object_detected:
+        if not object_detected and self.verbose:
             print(f"      ⚠️ No object detected (max force: {max([abs(p.getJointState(self.robot_id, j)[3]) for j in self.gripper_joints]):.1f}N)")
         
         return object_detected
@@ -226,127 +268,78 @@ class ArmController:
             
             if len(contacts) > 0:
                 has_contact = True
-                print(f"      ✅ Contact detected on gripper joint {gripper_joint} ({len(contacts)} contact points)")
+                if self.verbose:
+                    print(f"      ✅ Contact detected on gripper joint {gripper_joint} ({len(contacts)} contact points)")
         
         return has_contact
     
     def pick_object(self, object_location: Tuple[float, float, float], 
-                    approach_height: float = 0.15) -> bool:
+                    approach_height: float = 0.15,
+                    object_shape: str = None,
+                    object_image: np.ndarray = None) -> bool:
         """
-        Pick up an object at the given location
+        Pick up an object at the given location using horizontal gripper orientation
         
         Args:
             object_location: (x, y, z) position of the object
             approach_height: Height above object to approach from (meters)
+            object_shape: Shape of the object (unused, kept for compatibility)
+            object_image: Image of the object (unused, kept for compatibility)
             
         Returns:
             True if pick successful, False otherwise
         """
         x, y, z = object_location
         
-        print(f"\n🤏 Picking object at {object_location}")
+        if self.verbose:
+            print(f"\n🤏 Picking object at {object_location}")
         
-        # 0. Move to ready position first
+        # 0. Move to ready position first (gripper already open)
         self.move_to_ready_position()
         
-        # 1. Open gripper
-        self.open_gripper()
-        
-        # 2. Move to approach position (above object)
+        # 1. Move to approach position (above object)
         approach_pos = (x, y, z + approach_height)
         if not self.move_to_position(approach_pos):
-            print("   ❌ Failed to reach approach position")
+            if self.verbose:
+                print("   ❌ Failed to reach approach position")
             return False
         
-        # 3. Move down to object
-        if not self.move_to_position(object_location):
-            print("   ❌ Failed to reach object")
+        # 2. Move down to grasp position (at detected position)
+        grasp_pos = (x, y, z)
+        if not self.move_to_position(grasp_pos):
+            if self.verbose:
+                print("   ❌ Failed to reach grasp position")
             return False
         
-        # 4. Close gripper to grasp
+        # 3. Close gripper to grasp
         if not self.close_gripper():
-            print("   ❌ Failed to grip object (no force detected)")
+            if self.verbose:
+                print("   ❌ Failed to grip object (no force detected)")
             return False
         
-        # 5. Verify grip with contact detection
+        # 4. Verify grip with contact detection
         if not self.verify_grip():
-            print("   ❌ Failed to grip object (no contact detected)")
+            if self.verbose:
+                print("   ❌ Failed to grip object (no contact detected)")
             self.open_gripper()  # Release and give up
             return False
         
-        # 6. Lift object
+        # 5. Lift object
         lift_pos = (x, y, z + approach_height)
         if not self.move_to_position(lift_pos):
-            print("   ⚠️ Warning: Failed to lift cleanly")
+            if self.verbose:
+                print("   ⚠️ Warning: Failed to lift cleanly")
         
-        print("   ✅ Object picked and secured!")
+        if self.verbose:
+            print("   ✅ Object picked and secured!")
         return True
-    
-    def place_object(self, target_location: Tuple[float, float, float], 
-                     approach_height: float = 0.15) -> bool:
-        """
-        Place the held object at the target location
-        
-        Args:
-            target_location: (x, y, z) position to place the object
-            approach_height: Height above target to approach from (meters)
-            
-        Returns:
-            True if place successful, False otherwise
-        """
-        x, y, z = target_location
-        
-        print(f"\n📥 Placing object at {target_location}")
-        
-        # 1. Move to approach position (above target)
-        approach_pos = (x, y, z + approach_height)
-        if not self.move_to_position(approach_pos):
-            print("   ❌ Failed to reach approach position")
-            return False
-        
-        # 2. Move down to target
-        if not self.move_to_position(target_location):
-            print("   ❌ Failed to reach target")
-            return False
-        
-        # 3. Open gripper to release
-        self.open_gripper()
-        
-        # 4. Retract
-        retract_pos = (x, y, z + approach_height)
-        self.move_to_position(retract_pos)
-        
-        print("   ✅ Object placed!")
-        return True
-    
-    def move_to_home_position(self) -> None:
-        """
-        Move arm to a safe home/rest position
-        """
-        print("\n🏠 Moving to home position...")
-        # Define a safe home configuration (all joints at 0 or safe angles)
-        home_joint_positions = [0.0] * len(self.arm_joints)
-        
-        for joint_idx, target_pos in zip(self.arm_joints, home_joint_positions):
-            p.setJointMotorControl2(
-                self.robot_id,
-                joint_idx,
-                p.POSITION_CONTROL,
-                targetPosition=target_pos,
-                force=500
-            )
-        
-        # Simulate to let arm settle
-        for _ in range(240):
-            p.stepSimulation()
-        
-        print("   ✅ Home position reached")
     
     def move_to_ready_position(self) -> None:
         """
-        Move arm to a ready-to-pick configuration (arm bent down and forward)
+        Move arm to a ready-to-pick configuration with gripper open
         """
-        print("\n🎯 Moving to ready position...")
+        if self.verbose:
+            print("\n🎯 Moving to ready position...")
         # Good picking configuration: elbow bent, arm pointing forward and down
         ready_positions = [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
         
@@ -360,33 +353,21 @@ class ArmController:
                 maxVelocity=2.0
             )
         
-        # Simulate to let arm settle
-        for _ in range(240):
+        # Open gripper fully in ready position
+        for joint in self.gripper_joints:
+            p.setJointMotorControl2(
+                bodyUniqueId=self.robot_id,
+                jointIndex=joint,
+                controlMode=p.POSITION_CONTROL,
+                targetPosition=0.10,  # 10cm opening
+                force=250  # Very strong force
+            )
+        
+        # Simulate to let arm and gripper settle completely
+        for _ in range(300):  # More steps to ensure full opening
             p.stepSimulation()
         
         # Check where end effector ended up
-        ee_pos = p.getLinkState(self.robot_id, self.end_effector_link)[0]
-        print(f"   ✅ Ready position reached, end effector at: ({ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f})")
-
-
-def pick_and_place(arm_controller: ArmController, 
-                   object_location: Tuple[float, float, float],
-                   target_location: Tuple[float, float, float]) -> bool:
-    """
-    Convenience function to pick an object and place it at a target
-    
-    Args:
-        arm_controller: ArmController instance
-        object_location: Where to pick from
-        target_location: Where to place
-        
-    Returns:
-        True if both pick and place succeeded
-    """
-    if not arm_controller.pick_object(object_location):
-        return False
-    
-    if not arm_controller.place_object(target_location):
-        return False
-    
-    return True
+        if self.verbose:
+            ee_pos = p.getLinkState(self.robot_id, self.end_effector_link)[0]
+            print(f"   ✅ Ready position reached, end effector at: ({ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f})")
