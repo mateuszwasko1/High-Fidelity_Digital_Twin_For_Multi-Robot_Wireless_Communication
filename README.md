@@ -1,7 +1,7 @@
 # High-Fidelity Digital Twin For Multi-Robot Wireless Communication
 
 ## Project Overview
-This project implements an autonomous robotic sorting system using a Franka Panda robot arm in PyBullet simulation. The system uses vision-based object detection (OWL-ViT) to identify objects, intelligent IK-based manipulation to pick them up, and sorts them into color-coded bins.
+This project implements an autonomous robotic sorting system using a Franka Panda robot arm in PyBullet simulation. The system uses vision-based object detection (OWL-ViT) to identify objects, intelligent IK-based manipulation to pick them up, and sorts them into bins.
 
 ### Key Features
 - **Vision-based Detection**: Overhead camera with OWL-ViT model for object detection
@@ -26,7 +26,7 @@ This project implements an autonomous robotic sorting system using a Franka Pand
 The robot will:
 1. Detect all objects in the workspace
 2. Pick them up one by one using optimal grasp strategy
-3. Sort them into color-matched bins (blue→blue_bin, red→red_bin, etc.)
+3. Sort them into shape specific bins
 
 ---
 
