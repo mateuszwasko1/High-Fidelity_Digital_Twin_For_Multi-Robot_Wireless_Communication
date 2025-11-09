@@ -40,11 +40,12 @@ def main():
     vlm_detector = create_detector("clip")  # Using ViT-B/32 with timing diagnostics
     vlm_detector.load_model()
     
-    # Initialize arm controller (silent)
-    arm_controller = ArmController(robot_id, end_effector_link_index=11, gripper_joints=[9, 10], verbose=False)
+    # Initialize arm controller (verbose for debugging)
+    arm_controller = ArmController(robot_id, end_effector_link_index=11, gripper_joints=[9, 10], verbose=True)
 
     # Let physics settle
-    for _ in range(240):
+    # PERFORMANCE FIX: Reduced from 240 to 120 steps for faster initialization
+    for _ in range(120):
         p.stepSimulation()
     
     # Extract container IDs to exclude from detection (flatten lists since each bin has 4 walls)
@@ -76,12 +77,17 @@ def main():
     attempt = 0
     max_consecutive_failures = 3  # Stop after 3 consecutive failures to find objects
     consecutive_failures = 0
+    max_total_attempts = 20  # Safety limit: stop after 20 total attempts
     
-    while True:  # Continue until no more objects detected
+    while attempt < max_total_attempts:  # Safety limit to prevent infinite loops
         attempt += 1
+        print(f"\n{'='*60}")
+        print(f"🔄 Attempt {attempt}/{max_total_attempts}")
+        print(f"{'='*60}")
         
         # Keep trying to find a NEW object (not one we've already attempted)
-        max_detection_attempts = 10
+        # PERFORMANCE FIX: Reduced from 10 to 2 attempts to eliminate 80% of redundant detection calls
+        max_detection_attempts = 2
         closest_object = None
         
         for detection_attempt in range(max_detection_attempts):
@@ -114,14 +120,21 @@ def main():
             else:
                 # This is a duplicate, try to exclude it by adding a temporary marker
                 # We'll just try again - the depth detection might pick a different cluster
-                time.sleep(0.1)
+                if detection_attempt < max_detection_attempts - 1:
+                    print(f"      ⏭️  Skipping duplicate detection, trying again...")
+                    # Brief pause to let physics settle (reduced from 0.1 to 0.05 seconds)
+                    for _ in range(12):
+                        p.stepSimulation()
+                        time.sleep(1./240.)
                 continue
         
         # Break outer loop if we've had too many consecutive failures
         if consecutive_failures >= max_consecutive_failures:
+            print(f"\n   ⚠️ Stopping: {consecutive_failures} consecutive detection failures")
             break
         
         if not closest_object:
+            print(f"   ⚠️ No valid object found in this attempt, continuing...")
             continue  # Try again in next iteration
         
         # Reset consecutive failures since we found an object
@@ -183,12 +196,14 @@ def main():
             print(f"   {'✅' if success else '❌'} pick_object returned: {success}")
             
             if success:
-                time.sleep(0.5)
-                
-                # Lift and verify grip
+                # Lift and verify grip (reduced delays for faster operation)
                 lift_pos = (object_pos[0], object_pos[1], 0.40)
                 arm_controller.move_to_position(lift_pos)
-                time.sleep(0.5)
+                
+                # Give physics time to settle (reduced from 0.5 to 0.2 seconds)
+                for _ in range(48):  # 0.2 seconds at 240 Hz
+                    p.stepSimulation()
+                    time.sleep(1./240.)
                 
                 # Check if holding object
                 object_is_held = False
@@ -236,7 +251,11 @@ def main():
                     
                     # Release object
                     arm_controller.open_gripper()
-                    time.sleep(1.0)
+                    
+                    # Brief settling time (reduced from 1.0 to 0.3 seconds)
+                    for _ in range(72):  # 0.3 seconds at 240 Hz
+                        p.stepSimulation()
+                        time.sleep(1./240.)
                     
                     # Return to ready
                     arm_controller.move_to_ready_position()
@@ -244,6 +263,7 @@ def main():
                     success = False
             
             if not success:
+                print(f"   ⚠️ Failed to pick object, marking position and moving on...")
                 failed_objects.append({
                     'name': closest_object.name,
                     'location': closest_object.location,
@@ -252,7 +272,9 @@ def main():
                 failed_positions.append((object_pos[0], object_pos[1], object_pos[2]))
                 
                 # Move away from the failed object
+                print(f"   🔄 Returning to ready position...")
                 arm_controller.move_to_ready_position()
+                print(f"   ✅ Ready for next attempt")
         else:
             print(f"   ⚠️ No image captured for VLM analysis")
             break

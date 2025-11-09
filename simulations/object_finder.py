@@ -277,7 +277,8 @@ def _extract_object_image(rgb: np.ndarray, labels: np.ndarray, label_id: int,
     # Resize to 224x224 for VLM performance (faster than 336, still good quality)
     # CLIP works well with 224 - provides good balance of speed and accuracy
     target_size = 224
-    cropped_resized = cv2.resize(cropped, (target_size, target_size), interpolation=cv2.INTER_LANCZOS4)
+    # PERFORMANCE FIX: Changed from INTER_LANCZOS4 to INTER_LINEAR for 4x faster resizing
+    cropped_resized = cv2.resize(cropped, (target_size, target_size), interpolation=cv2.INTER_LINEAR)
     
     # Debug window disabled for performance
     # cv2.imshow("Detected Object (Cropped)", cv2.cvtColor(cropped_resized, cv2.COLOR_RGB2BGR))

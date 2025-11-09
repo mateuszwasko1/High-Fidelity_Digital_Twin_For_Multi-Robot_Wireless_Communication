@@ -48,12 +48,15 @@ class CLIPDetector(VLMDetector):
     CLIP (OpenAI) detector implementation - Much better for shape classification
     """
     
-    def __init__(self, device: str = "mps"):
+    def __init__(self, device: str = "cpu"):
         """
         Initialize CLIP detector
         
         Args:
-            device: Device to run on ('mps', 'cuda', or 'cpu')
+            device: Device to run on ('cpu', 'cuda', or 'mps')
+        
+        Note: Default changed to 'cpu' for better reliability on Mac.
+        MPS can be unstable and slower for small models like CLIP ViT-B/32.
         """
         super().__init__()
         self.device = device
