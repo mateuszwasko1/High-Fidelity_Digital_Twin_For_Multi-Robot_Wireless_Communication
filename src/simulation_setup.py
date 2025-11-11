@@ -53,7 +53,7 @@ def load_environment() -> Tuple[int, int]:
     # Load robot arm in normal orientation (bins are at negative X behind robot)
     robot_id = p.loadURDF("franka_panda/panda.urdf", useFixedBase=True)
     
-    print(f"✅ Environment loaded - Robot ID: {robot_id}")
+    print(f"Environment loaded - Robot ID: {robot_id}")
     
     return plane_id, robot_id
 
@@ -166,33 +166,17 @@ class OverheadCamera:
             for obj_id in mask_ids:
                 combined_mask |= (seg == obj_id)
         
-        # Add spatial region masking for bin areas
-        # PERFORMANCE FIX: Commented out pixel-by-pixel loop that was causing 5+ minute delays
-        # This nested loop with 307,200 iterations (640x480) was the critical bottleneck
-        # TODO: Implement vectorized version using numpy for 1000x speedup if needed
-        # if exclude_regions:
-        #     height, width = depth_m.shape
-        #     
-        #     # Create coordinate grids for the image
-        #     for row in range(height):
-        #         for col in range(width):
-        #             if combined_mask[row, col]:
-        #                 continue  # Already masked
-        #             
-        #             # Convert pixel to world coordinates using depth
-        #             d = depth_m[row, col]
-        #             if np.isnan(d):
-        #                 continue
-        #             
-        #             # Get world position for this pixel
-        #             world_pos = self._pixel_to_world(col, row, d)
-        #             x, y = world_pos[0], world_pos[1]
-        #             
-        #             # Check if point is in any excluded region
-        #             for (x_min, x_max, y_min, y_max) in exclude_regions:
-        #                 if x_min <= x <= x_max and y_min <= y <= y_max:
-        #                     combined_mask[row, col] = True
-        #                     break
+        # Add spatial region masking - simply mask left and right edges where bins are
+        # Bins are at Y = ±0.55, we want to mask everything beyond about Y = ±0.45
+        # Camera looks down at [0.5, 0.0, 0], yaw=270° means:
+        # - Left side of image = positive Y (right bins)
+        # - Right side of image = negative Y (left bins)
+        if exclude_regions is not None:
+            height, width = depth_m.shape
+            # Mask left ~15% of image (right bins at Y=+0.55)
+            combined_mask[:, :int(189)] = True
+            # Mask right ~15% of image (left bins at Y=-0.55)
+            combined_mask[:, int(449):] = True
         
         # Apply mask to depth
         depth_m = depth_m.astype(float)
@@ -203,50 +187,6 @@ class OverheadCamera:
         rgb[combined_mask] = [255, 255, 255]
 
         return rgb, depth_m
-    
-    def _pixel_to_world(self, px: int, py: int, depth: float) -> Tuple[float, float, float]:
-        """
-        Convert pixel coordinates + depth to world coordinates
-        
-        Args:
-            px: Pixel x coordinate
-            py: Pixel y coordinate
-            depth: Depth in meters
-            
-        Returns:
-            (x, y, z) world coordinates
-        """
-        width, height = self.image_size
-        
-        # Camera position
-        target = np.array(self.camera_target)
-        camera_pos = target + np.array([0, 0, self.camera_height])
-        
-        # Normalize pixel coordinates
-        nx = (2.0 * px / width) - 1.0
-        ny = 1.0 - (2.0 * py / height)
-        
-        # View frustum size at depth
-        fov_rad = np.deg2rad(self.fov)
-        aspect = width / height
-        view_height = 2.0 * depth * np.tan(fov_rad / 2.0)
-        view_width = view_height * aspect
-        
-        view_x = nx * (view_width / 2.0)
-        view_y = ny * (view_height / 2.0)
-        
-        # Camera coordinate system
-        forward = target - camera_pos
-        forward = forward / np.linalg.norm(forward)
-        
-        yaw_rad = np.deg2rad(self.camera_yaw)
-        right = np.array([np.cos(yaw_rad), np.sin(yaw_rad), 0])
-        up = np.cross(right, forward)
-        
-        # World point
-        world_point = camera_pos + forward * depth + right * view_x + up * view_y
-        
-        return (world_point[0], world_point[1], world_point[2])
 
     def _depth_buffer_to_distance(self, depth_buffer: np.ndarray) -> np.ndarray:
         """
@@ -404,10 +344,6 @@ def spawn_debug_grid_objects():
     objects_dict = {}
     placed_positions = []
     
-    print(f"🎯 Spawning test objects with random placement...")
-    print(f"   Workspace area: X({x_min:.2f}-{x_max:.2f}), Y({y_min:.2f}-{y_max:.2f})")
-    print(f"   Minimum spacing: {min_spacing:.2f}m")
-    
     for idx, (shape, color, color_name) in enumerate(objects_to_spawn):
         # Try to find a valid position
         max_attempts = 100
@@ -433,7 +369,6 @@ def spawn_debug_grid_objects():
                 break
         
         if not position_found:
-            print(f"   ⚠️ Could not find valid position for {color_name}_{shape} after {max_attempts} attempts")
             continue
         
         obj_name = f"{color_name}_{shape}_{idx}"
@@ -447,10 +382,10 @@ def spawn_debug_grid_objects():
                 'position': candidate_pos,
                 'color': color
             }
-            print(f"   ✅ {obj_name} at ({candidate_pos[0]:.2f}, {candidate_pos[1]:.2f}, {candidate_pos[2]:.2f})")
         except Exception as e:
-            print(f"   ⚠️ Failed to create {obj_name}: {e}")
+            continue
     
+    print(f"Spawned {len(objects_dict)}/5 objects")
     return objects_dict
 
 
@@ -481,7 +416,6 @@ def create_sorting_containers():
     
     containers_dict = {}
     
-    print("📦 Adding sorting containers...")
     for name, pos in container_positions.items():
         # Create OPEN-TOP bin with 4 walls (no top, no bottom collision)
         # Each bin is 20cm x 20cm with 30cm tall walls
@@ -524,7 +458,6 @@ def create_sorting_containers():
             'position': pos,
             'color': color[:3]
         }
-        print(f"   ✅ {name} at {pos} (open-top bin)")
     
     return containers_dict
 

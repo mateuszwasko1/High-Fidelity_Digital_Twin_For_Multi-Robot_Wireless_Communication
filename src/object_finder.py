@@ -45,6 +45,7 @@ class Object:
 
 def find_closest_object(camera, robot_id: int, camera_height: float = 1.5, 
                         exclude_ids: List[int] = None, exclude_regions: List[Tuple[float, float, float, float]] = None,
+                        exclude_positions: List[Tuple[float, float, float]] = None,
                         debug: bool = False) -> Optional[Object]:
     """
     Find the closest object to the robot using depth clustering
@@ -55,6 +56,7 @@ def find_closest_object(camera, robot_id: int, camera_height: float = 1.5,
         camera_height: Height of camera above ground (meters)
         exclude_ids: List of object IDs to exclude (e.g., containers)
         exclude_regions: List of (x_min, x_max, y_min, y_max) regions to mask out (e.g., bin areas)
+        exclude_positions: List of (x, y, z) positions to avoid (e.g., previously failed objects)
         debug: If True, show debug visualizations
         
     Returns:
@@ -123,6 +125,21 @@ def find_closest_object(camera, robot_id: int, camera_height: float = 1.5,
         
         # Convert image coordinates to world coordinates
         world_pos = _image_to_world(cx, cy, avg_depth, camera)
+        
+        # Check if this position should be excluded (too close to a failed attempt)
+        if exclude_positions:
+            too_close = False
+            for excluded_pos in exclude_positions:
+                distance_to_excluded = np.sqrt(
+                    (world_pos[0] - excluded_pos[0])**2 + 
+                    (world_pos[1] - excluded_pos[1])**2
+                )
+                if distance_to_excluded < 0.08:  # Within 8cm of failed position
+                    too_close = True
+                    break
+            
+            if too_close:
+                continue  # Skip this object, try next one
         
         # Calculate distance to robot (only X-Y, ignore Z)
         distance = np.sqrt((world_pos[0] - robot_pos[0])**2 + (world_pos[1] - robot_pos[1])**2)
