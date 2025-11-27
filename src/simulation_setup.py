@@ -213,8 +213,7 @@ class OverheadCamera:
         return z
 
 
-def spawn_object(obj_type: str, position: List[float], color: List[float], 
-                size: float = 0.035) -> int:
+def spawn_object(obj_type: str, position: List[float], color: List[float], size: float = 0.035) -> int:
     """
     Spawn a single object in the simulation
     
@@ -233,25 +232,25 @@ def spawn_object(obj_type: str, position: List[float], color: List[float],
         import numpy as np
         height = size * 2.0  # Height of the prism (taller for easier detection)
         base_size = size * 2.0  # Size of triangle base (much larger for visibility)
-        
+
         # Create equilateral triangle vertices (flat on XY plane)
         # Triangle pointing UP (toward +Y axis)
         h = base_size * np.sqrt(3) / 2  # Height of equilateral triangle
-        
+
         # Bottom triangle (Z = 0)
         vertices = [
             [0, h * 2/3, 0],              # Top vertex
             [-base_size/2, -h * 1/3, 0],  # Bottom-left vertex
             [base_size/2, -h * 1/3, 0],   # Bottom-right vertex
         ]
-        
+
         # Top triangle (Z = height)
         vertices.extend([
             [0, h * 2/3, height],              # Top vertex
             [-base_size/2, -h * 1/3, height],  # Bottom-left vertex
             [base_size/2, -h * 1/3, height],   # Bottom-right vertex
         ])
-        
+
         # Define triangular faces (indices into vertices array)
         # Each face is defined by 3 vertex indices (counter-clockwise winding)
         indices = [
@@ -264,14 +263,14 @@ def spawn_object(obj_type: str, position: List[float], color: List[float],
             1, 2, 5,  1, 5, 4,  # Side 2
             2, 0, 3,  2, 3, 5   # Side 3
         ]
-        
+
         # Create collision shape with proper mesh
         collision_shape = p.createCollisionShape(
             p.GEOM_MESH,
             vertices=vertices,
             indices=indices
         )
-        
+
         # Create visual shape with proper mesh
         visual_shape = p.createVisualShape(
             p.GEOM_MESH,

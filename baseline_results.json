@@ -1,0 +1,355 @@
+{
+  "configs": [
+    {
+      "name": "Local (IK)",
+      "aggregate": {
+        "avg_cycle_time_ms": 22793.399036842104,
+        "std_cycle_time_ms": 5851.369787200323,
+        "avg_deviation_m": 0.08289085334946325,
+        "std_deviation_m": 0.12530536164179476,
+        "success_rate": 52.63157894736842,
+        "std_success_rate": 6.613482762500455,
+        "avg_detector_latency_ms": 0.0,
+        "std_detector_latency_ms": 0.0,
+        "failure_counts": {
+          "ik_failure": 24,
+          "grip_failure": 3
+        }
+      },
+      "trials": [
+        {
+          "avg_cycle_time_ms": 24389.392525000003,
+          "avg_deviation_m": 0.10174822579023235,
+          "success_rate": 62.5,
+          "avg_detector_latency_ms": 0.0,
+          "failure_counts": {
+            "ik_failure": 3
+          }
+        },
+        {
+          "avg_cycle_time_ms": 24411.243875000007,
+          "avg_deviation_m": 0.10508592712840953,
+          "success_rate": 62.5,
+          "avg_detector_latency_ms": 0.0,
+          "failure_counts": {
+            "ik_failure": 3
+          }
+        },
+        {
+          "avg_cycle_time_ms": 23895.272971428563,
+          "avg_deviation_m": 0.011967624266917935,
+          "success_rate": 71.42857142857143,
+          "avg_detector_latency_ms": 0.0,
+          "failure_counts": {
+            "ik_failure": 1,
+            "grip_failure": 1
+          }
+        },
+        {
+          "avg_cycle_time_ms": 20115.49395714287,
+          "avg_deviation_m": 0.12217174818204464,
+          "success_rate": 28.57142857142857,
+          "avg_detector_latency_ms": 0.0,
+          "failure_counts": {
+            "ik_failure": 5
+          }
+        },
+        {
+          "avg_cycle_time_ms": 20109.836477777775,
+          "avg_deviation_m": 0.07891764783469135,
+          "success_rate": 33.33333333333333,
+          "avg_detector_latency_ms": 0.0,
+          "failure_counts": {
+            "ik_failure": 6
+          }
+        },
+        {
+          "avg_cycle_time_ms": 27883.381600000008,
+          "avg_deviation_m": 0.008538053285839606,
+          "success_rate": 100.0,
+          "avg_detector_latency_ms": 0.0,
+          "failure_counts": {}
+        },
+        {
+          "avg_cycle_time_ms": 27682.839899999977,
+          "avg_deviation_m": 0.018227993656561026,
+          "success_rate": 100.0,
+          "avg_detector_latency_ms": 0.0,
+          "failure_counts": {}
+        },
+        {
+          "avg_cycle_time_ms": 20540.07265714282,
+          "avg_deviation_m": 0.13334492892812944,
+          "success_rate": 28.57142857142857,
+          "avg_detector_latency_ms": 0.0,
+          "failure_counts": {
+            "ik_failure": 4,
+            "grip_failure": 1
+          }
+        },
+        {
+          "avg_cycle_time_ms": 27230.7608000001,
+          "avg_deviation_m": 0.015765607629770324,
+          "success_rate": 100.0,
+          "avg_detector_latency_ms": 0.0,
+          "failure_counts": {}
+        },
+        {
+          "avg_cycle_time_ms": 24147.15827500001,
+          "avg_deviation_m": 0.05561560285577912,
+          "success_rate": 62.5,
+          "avg_detector_latency_ms": 0.0,
+          "failure_counts": {
+            "ik_failure": 2,
+            "grip_failure": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cloud (Simulated 200 ms Delay)",
+      "aggregate": {
+        "avg_cycle_time_ms": 17582.140069999998,
+        "std_cycle_time_ms": 11106.517033041346,
+        "avg_deviation_m": 0.03293387365344127,
+        "std_deviation_m": 0.09327725789335146,
+        "success_rate": 41.66666666666667,
+        "std_success_rate": 6.364688465216445,
+        "avg_detector_latency_ms": 199.2293693910005,
+        "std_detector_latency_ms": 52.27041591987693,
+        "failure_counts": {
+          "stale_pick": 11,
+          "ik_failure": 8,
+          "misclassification": 16
+        }
+      },
+      "trials": [
+        {
+          "avg_cycle_time_ms": 17823.277812500066,
+          "avg_deviation_m": 0.06366585734127424,
+          "success_rate": 25.0,
+          "avg_detector_latency_ms": 188.94646655853296,
+          "failure_counts": {
+            "stale_pick": 2,
+            "ik_failure": 3,
+            "misclassification": 1
+          }
+        },
+        {
+          "avg_cycle_time_ms": 12343.888199999981,
+          "avg_deviation_m": 0.056568841863442236,
+          "success_rate": 25.0,
+          "avg_detector_latency_ms": 170.7895681035222,
+          "failure_counts": {
+            "ik_failure": 2,
+            "misclassification": 4
+          }
+        },
+        {
+          "avg_cycle_time_ms": 13256.258100000001,
+          "avg_deviation_m": 0.003972078232158241,
+          "success_rate": 28.57142857142857,
+          "avg_detector_latency_ms": 215.02026748815834,
+          "failure_counts": {
+            "misclassification": 3,
+            "stale_pick": 2
+          }
+        },
+        {
+          "avg_cycle_time_ms": 15003.17287499999,
+          "avg_deviation_m": 0.00830012961833116,
+          "success_rate": 37.5,
+          "avg_detector_latency_ms": 200.76341190010652,
+          "failure_counts": {
+            "stale_pick": 1,
+            "misclassification": 3,
+            "ik_failure": 1
+          }
+        },
+        {
+          "avg_cycle_time_ms": 28104.55980000006,
+          "avg_deviation_m": 0.005786816412109983,
+          "success_rate": 100.0,
+          "avg_detector_latency_ms": 253.58739522357814,
+          "failure_counts": {}
+        },
+        {
+          "avg_cycle_time_ms": 27879.223899999943,
+          "avg_deviation_m": 0.008116392916083516,
+          "success_rate": 100.0,
+          "avg_detector_latency_ms": 153.3410212337072,
+          "failure_counts": {}
+        },
+        {
+          "avg_cycle_time_ms": 20368.0612111111,
+          "avg_deviation_m": 0.04800390139403978,
+          "success_rate": 55.55555555555556,
+          "avg_detector_latency_ms": 178.4306321394329,
+          "failure_counts": {
+            "stale_pick": 1,
+            "ik_failure": 1,
+            "misclassification": 2
+          }
+        },
+        {
+          "avg_cycle_time_ms": 22095.884711111114,
+          "avg_deviation_m": 0.04764879811036054,
+          "success_rate": 55.55555555555556,
+          "avg_detector_latency_ms": 216.33965840244466,
+          "failure_counts": {
+            "ik_failure": 1,
+            "stale_pick": 2,
+            "misclassification": 1
+          }
+        },
+        {
+          "avg_cycle_time_ms": 27781.410099999903,
+          "avg_deviation_m": 0.012228063176384474,
+          "success_rate": 100.0,
+          "avg_detector_latency_ms": 243.50171083885664,
+          "failure_counts": {}
+        },
+        {
+          "avg_cycle_time_ms": 16853.897412499977,
+          "avg_deviation_m": 0.0041179591191007935,
+          "success_rate": 37.5,
+          "avg_detector_latency_ms": 220.1577470465735,
+          "failure_counts": {
+            "stale_pick": 3,
+            "misclassification": 2
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cloud (Simulated 600 ms Delay)",
+      "aggregate": {
+        "avg_cycle_time_ms": 14843.753043795608,
+        "std_cycle_time_ms": 35123.70856280849,
+        "avg_deviation_m": 0.027680200585049622,
+        "std_deviation_m": 0.06113255909911221,
+        "success_rate": 5.109489051094891,
+        "std_success_rate": 1.8812211183053114,
+        "avg_detector_latency_ms": 584.7954214152926,
+        "std_detector_latency_ms": 124.48649303733318,
+        "failure_counts": {
+          "ik_failure": 37,
+          "stale_pick": 54,
+          "misclassification": 39
+        }
+      },
+      "trials": [
+        {
+          "avg_cycle_time_ms": 38773.826579999935,
+          "avg_deviation_m": 0.03106256694522694,
+          "success_rate": 0.0,
+          "avg_detector_latency_ms": 580.949563605717,
+          "failure_counts": {
+            "ik_failure": 6,
+            "stale_pick": 6,
+            "misclassification": 3
+          }
+        },
+        {
+          "avg_cycle_time_ms": 27715.717799999766,
+          "avg_deviation_m": 0.008660576206966203,
+          "success_rate": 100.0,
+          "avg_detector_latency_ms": 443.1223348349831,
+          "failure_counts": {}
+        },
+        {
+          "avg_cycle_time_ms": 13199.436069999978,
+          "avg_deviation_m": 0.013627727861387986,
+          "success_rate": 10.0,
+          "avg_detector_latency_ms": 587.3530706585948,
+          "failure_counts": {
+            "misclassification": 5,
+            "stale_pick": 10,
+            "ik_failure": 3
+          }
+        },
+        {
+          "avg_cycle_time_ms": 10866.979886666619,
+          "avg_deviation_m": 0.041315205503641456,
+          "success_rate": 0.0,
+          "avg_detector_latency_ms": 601.1749474719846,
+          "failure_counts": {
+            "stale_pick": 6,
+            "misclassification": 5,
+            "ik_failure": 4
+          }
+        },
+        {
+          "avg_cycle_time_ms": 11242.88820000001,
+          "avg_deviation_m": 0.027000691897523247,
+          "success_rate": 0.0,
+          "avg_detector_latency_ms": 565.1181808973157,
+          "failure_counts": {
+            "stale_pick": 6,
+            "misclassification": 4,
+            "ik_failure": 6
+          }
+        },
+        {
+          "avg_cycle_time_ms": 13458.445218750028,
+          "avg_deviation_m": 0.022484674713960408,
+          "success_rate": 6.25,
+          "avg_detector_latency_ms": 562.817340977995,
+          "failure_counts": {
+            "stale_pick": 7,
+            "ik_failure": 5,
+            "misclassification": 3
+          }
+        },
+        {
+          "avg_cycle_time_ms": 5818.881499999937,
+          "avg_deviation_m": 0.0044314183964900816,
+          "success_rate": 16.666666666666664,
+          "avg_detector_latency_ms": 574.6715949064712,
+          "failure_counts": {
+            "misclassification": 5
+          }
+        },
+        {
+          "avg_cycle_time_ms": 11696.766272222249,
+          "avg_deviation_m": 0.02436938808382944,
+          "success_rate": 0.0,
+          "avg_detector_latency_ms": 614.8451892260531,
+          "failure_counts": {
+            "ik_failure": 6,
+            "stale_pick": 7,
+            "misclassification": 5
+          }
+        },
+        {
+          "avg_cycle_time_ms": 10782.203293333501,
+          "avg_deviation_m": 0.037046419888859775,
+          "success_rate": 6.666666666666667,
+          "avg_detector_latency_ms": 578.001200796283,
+          "failure_counts": {
+            "misclassification": 5,
+            "stale_pick": 5,
+            "ik_failure": 4
+          }
+        },
+        {
+          "avg_cycle_time_ms": 12991.210986666496,
+          "avg_deviation_m": 0.04084040666530272,
+          "success_rate": 6.666666666666667,
+          "avg_detector_latency_ms": 597.5127988177122,
+          "failure_counts": {
+            "ik_failure": 3,
+            "stale_pick": 7,
+            "misclassification": 4
+          }
+        }
+      ]
+    }
+  ],
+  "trials_per_config": 10,
+  "detector_configs": [
+    "local",
+    "cloud_200",
+    "cloud_600"
+  ]
+}

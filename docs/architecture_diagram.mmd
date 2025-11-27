@@ -1,0 +1,20 @@
+%% Architecture diagram for the project
+flowchart TD
+    A[pipeline.py] --> B[initialize_physics / load_environment]
+    A --> C[OverheadCamera]
+    A --> D[create_sorting_containers]
+    A --> E[spawn_debug_grid_objects]
+    A --> F[create_detector(CLIP)]
+    A --> G[ArmController(planner=IK)]
+
+    subgraph Detection Loop
+      C --> H[get_cropped_image(rgb, depth)]
+      H --> I[find_closest_object]
+      I --> J[cropped 224×224 + world (x,y,z)]
+      J --> K[CLIPDetector.detect_object]
+      K --> L{shape}
+    end
+
+    L -->|sphere/triangle/rectangle| M[select bin]
+    J --> G
+    G --> N[pick -> lift -> move -> drop]
