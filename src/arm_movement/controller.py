@@ -120,43 +120,40 @@ class ArmController:
     
     def close_gripper(self, steps: int = 100, force_threshold: float = 5.0) -> bool:
         """
-        Close gripper with force feedback
+        Close gripper and check for successful grasp
         
         Returns:
-            True if object detected, False otherwise
+            True if object detected (fingers didn't close fully), False otherwise
         """
-        object_detected = False
+        # Command gripper to close
+        for joint_idx in self.gripper_joints:
+            p.setJointMotorControl2(
+                self.robot_id,
+                joint_idx,
+                p.POSITION_CONTROL,
+                targetPosition=0.0,
+                force=100
+            )
         
-        for step in range(steps):
-            for joint_idx in self.gripper_joints:
-                p.setJointMotorControl2(
-                    self.robot_id,
-                    joint_idx,
-                    p.POSITION_CONTROL,
-                    targetPosition=0.0,
-                    force=100
-                )
-            
+        # Wait for gripper to close
+        for _ in range(steps):
             p.stepSimulation()
             time.sleep(1./240.)
             
-            if step > 10:
-                for joint_idx in self.gripper_joints:
-                    joint_state = p.getJointState(self.robot_id, joint_idx)
-                    applied_force = abs(joint_state[3])
-                    
-                    if applied_force > force_threshold:
-                        object_detected = True
-                        for _ in range(20):
-                            p.stepSimulation()
-                        return True
+        # Check grasp success using finger width
+        # If fingers are fully closed (width ~ 0), we missed the object
+        left_pos = p.getJointState(self.robot_id, self.gripper_joints[0])[0]
+        right_pos = p.getJointState(self.robot_id, self.gripper_joints[1])[0]
+        total_width = left_pos + right_pos
         
-        if not object_detected:
-            max_force = max([abs(p.getJointState(self.robot_id, j)[3]) for j in self.gripper_joints])
-            if max_force > 1.0:
-                object_detected = True
-        
-        return object_detected
+        if total_width < 0.005:  # 5mm tolerance
+            if self.verbose:
+                print("   Grasp failed: Fingers closed completely")
+            return False
+            
+        # Optional: Check force feedback as secondary confirmation
+        # (But width check is usually more reliable for rigid objects)
+        return True
     
     def verify_grip(self, object_id: Optional[int] = None) -> bool:
         """

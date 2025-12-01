@@ -29,10 +29,11 @@ class IKMotionPlanner:
         self.arm_joints = arm_joints
         self.verbose = verbose
         
-        # Franka Panda joint limits
-        self.lower_limits = [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]
-        self.upper_limits = [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
-        self.joint_ranges = [5.8, 3.5, 5.8, 3.0, 5.8, 3.8, 5.8]
+        # Franka Panda joint limits (7 arm joints + 2 gripper fingers)
+        # Arm joints: 0-6, Gripper fingers: 9, 10
+        self.lower_limits = [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973, 0.0, 0.0]
+        self.upper_limits = [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973, 0.04, 0.04]
+        self.joint_ranges = [5.8, 3.5, 5.8, 3.0, 5.8, 3.8, 5.8, 0.04, 0.04]
     
     def plan_to_position(self, target_pos: Tuple[float, float, float], 
                          target_orientation: Optional[Tuple[float, float, float, float]] = None) -> Optional[List[float]]:
@@ -56,13 +57,17 @@ class IKMotionPlanner:
         dy = target_pos[1] - robot_pos[1]
         
         # Adaptive rest pose based on target direction
+        # Include gripper joints (open position) in rest pose
         if target_pos[0] < 0:  # Backwards reach
-            rest_poses = [0, -0.785, 0, -2.356, 0, 1.571, 0.785]
+            rest_poses = [0, -0.785, 0, -2.356, 0, 1.571, 0.785, 0.04, 0.04]
         else:  # Forward reach
             base_rotation = np.arctan2(dy, dx)
-            rest_poses = [base_rotation, -0.785, 0, -2.356, 0, 1.571, 0.785]
+            rest_poses = [base_rotation, -0.785, 0, -2.356, 0, 1.571, 0.785, 0.04, 0.04]
         
         # Calculate IK solution
+        # Use Null Space IK with joint damping for robust solutions
+        joint_damping = [0.1] * 9  # Damping for 9 movable joints
+        
         joint_poses = p.calculateInverseKinematics(
             self.robot_id,
             self.end_effector_link,
@@ -72,6 +77,7 @@ class IKMotionPlanner:
             upperLimits=self.upper_limits,
             jointRanges=self.joint_ranges,
             restPoses=rest_poses,
+            jointDamping=joint_damping,
             maxNumIterations=100,
             residualThreshold=1e-5
         )

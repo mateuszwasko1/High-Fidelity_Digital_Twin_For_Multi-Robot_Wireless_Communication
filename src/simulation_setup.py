@@ -28,10 +28,10 @@ def initialize_physics(gui_mode: bool = True) -> int:
     p.setRealTimeSimulation(0)
     
     # PERFORMANCE OPTIMIZATIONS:
-    # Reduce solver iterations from default 150 to 50 for faster physics
-    p.setPhysicsEngineParameter(numSolverIterations=50)
-    # Reduce substeps from default 4 to 1 for faster simulation
-    p.setPhysicsEngineParameter(numSubSteps=1)
+    # Increase solver iterations for stable grasping (default 50 is too low)
+    p.setPhysicsEngineParameter(numSolverIterations=150)
+    # Increase substeps for better collision resolution
+    p.setPhysicsEngineParameter(numSubSteps=4)
     # Disable debug GUI overlay to reduce rendering overhead
     p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
     # Keep rendering on for visual feedback
@@ -67,6 +67,16 @@ def initialize_robot_gripper(robot_id: int, gripper_joints: list):
         gripper_joints: List of gripper joint indices
     """
     for joint in gripper_joints:
+        # Set high friction for gripper fingers to prevent slipping
+        p.changeDynamics(
+            robot_id,
+            joint,
+            lateralFriction=1.5,
+            spinningFriction=0.1,
+            rollingFriction=0.1,
+            frictionAnchor=True
+        )
+        
         p.setJointMotorControl2(
             robot_id,
             joint,
@@ -305,9 +315,11 @@ def spawn_object(obj_type: str, position: List[float], color: List[float],
         object_id, 
         -1,  # -1 means base link
         lateralFriction=1.0,
-        spinningFriction=0.1,
-        rollingFriction=0.01,
-        restitution=0.1
+        spinningFriction=0.005,
+        rollingFriction=0.005,
+        restitution=0.0,
+        contactStiffness=30000,
+        contactDamping=1000
     )
     
     return object_id
